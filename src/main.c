@@ -284,7 +284,7 @@ int main(int argc, char **argv) {
            width, height, display.frame_bytes);
     printf("  GET  /frame   Download displayed %dx%d pixels as PNG (?format=raw for RGB24)\n",
            width, height);
-    printf("  POST /draw    Draw JSON shapes/text (line, rect, oval, polygon, text)\n");
+    printf("  POST /draw    Draw JSON ops (clear, pixel, line, rect, oval, polygon, text)\n");
     printf("  POST /alert   Play alert sound (/alert/1..3 or ding, chime, bell; GET /alert to list)\n");
     printf("  GET  /info    Device status & capabilities\n");
     fflush(stdout);
