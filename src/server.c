@@ -1733,6 +1733,31 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
             return;
         }
 
+        /* Optional custom melody sequence: ?melody=C5:120,E5:120,G5:240 or JSON {"melody":"..."} */
+        char melody[256] = {0};
+        if (query_get(req->query, "melody", melody, sizeof(melody)) ||
+            (bj && bj->type == JSON_OBJECT &&
+             json_as_string(json_obj_get(bj, "melody")) != NULL)) {
+            if (!melody[0] && bj) {
+                snprintf(melody, sizeof(melody), "%s", json_as_string(json_obj_get(bj, "melody")));
+            }
+            json_free(bj);
+            bool played = false;
+            if (!audio_trigger_melody(srv->audio, melody, (uint8_t)volume, &played)) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"invalid melody syntax (e.g. C5:120,E5:120,G5:240; R for rest)\"}",
+                          ka);
+                return;
+            }
+            char esc[320], json[448];
+            json_escape(melody, esc, sizeof(esc));
+            snprintf(json, sizeof(json),
+                     "{\"ok\":true,\"melody\":\"%s\",\"volume\":%d,\"played\":%s}",
+                     esc, volume, played ? "true" : "false");
+            send_json(fd, 200, "OK", json, ka);
+            return;
+        }
+
         if (query_get(req->query, "sound", val, sizeof(val)) ||
             query_get(req->query, "id", val, sizeof(val))) {
             sound_id = audio_parse_alert_id(val);

@@ -896,6 +896,9 @@ curl -X POST "http://127.0.0.1:8080/alert/bell?volume=70"
 curl -X POST http://127.0.0.1:8080/alert
 curl -X POST "http://127.0.0.1:8080/alert?sound=2&volume=80"
 curl -X POST http://127.0.0.1:8080/alert -d '{"sound":"bell","volume":60}'
+
+# Custom bell/chime melody (notes A-G with optional #/b, octave 2-7, :duration_ms; R for rest)
+curl -X POST http://127.0.0.1:8080/alert -d '{"melody":"C5:120,E5:120,G5:240","volume":75}'
 ```
 
 ```json

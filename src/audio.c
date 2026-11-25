@@ -44,6 +44,14 @@ struct MarkeeAudio {
     size_t q_tail;
     size_t q_count;
 
+    /* Pending custom melody PCM (played and unloaded on main thread in audio_tick) */
+    int16_t *pending_melody_pcm;
+    size_t pending_melody_frames;
+    unsigned int pending_melody_sr;
+    uint8_t pending_melody_vol;
+    Sound active_melody_sound;
+    bool has_active_melody;
+
     uint64_t trigger_count;
     int last_alert_id;
     uint8_t last_volume;
@@ -222,6 +230,142 @@ bool audio_synthesize_pcm(int id, int16_t **out_samples, size_t *out_frame_count
     return true;
 }
 
+static bool parse_note_freq(const char *tok, double *out_hz, bool *out_rest) {
+    *out_hz = 0.0;
+    *out_rest = false;
+    if (!tok || !*tok) return false;
+    if ((tok[0] == 'R' || tok[0] == 'r' || tok[0] == '-') && tok[1] == '\0') {
+        *out_rest = true;
+        return true;
+    }
+    int semi = -1;
+    switch (toupper((unsigned char)tok[0])) {
+        case 'C': semi = 0; break;
+        case 'D': semi = 2; break;
+        case 'E': semi = 4; break;
+        case 'F': semi = 5; break;
+        case 'G': semi = 7; break;
+        case 'A': semi = 9; break;
+        case 'B': semi = 11; break;
+        default: return false;
+    }
+    const char *p = tok + 1;
+    if (*p == '#') { semi++; p++; }
+    else if (*p == 'b' || *p == 'B') { semi--; p++; }
+    if (!isdigit((unsigned char)*p) || p[1] != '\0') return false;
+    int oct = *p - '0';
+    if (oct < 2 || oct > 7) return false;
+    int midi = (oct + 1) * 12 + semi;
+    *out_hz = 440.0 * pow(2.0, (double)(midi - 69) / 12.0);
+    return true;
+}
+
+bool audio_synthesize_melody_pcm(const char *melody, int16_t **out_samples,
+                                 size_t *out_frame_count, unsigned int *out_sample_rate) {
+    if (!melody || !*melody || !out_samples || !out_frame_count || !out_sample_rate) return false;
+
+    typedef struct {
+        double hz;
+        bool rest;
+        int dur_ms;
+    } MelodyNote;
+
+    MelodyNote notes[32];
+    size_t count = 0;
+    int total_ms = 0;
+
+    const char *p = melody;
+    while (*p) {
+        while (*p && (isspace((unsigned char)*p) || *p == ',')) p++;
+        if (!*p) break;
+        if (count >= 32) return false;
+
+        const char *end = p;
+        while (*end && *end != ',' && !isspace((unsigned char)*end)) end++;
+        size_t len = (size_t)(end - p);
+        if (len == 0 || len >= 24) return false;
+
+        char tok[24];
+        memcpy(tok, p, len);
+        tok[len] = '\0';
+        p = end;
+
+        int dur_ms = 160;
+        char *colon = strchr(tok, ':');
+        if (colon) {
+            *colon = '\0';
+            char *dend = NULL;
+            long d = strtol(colon + 1, &dend, 10);
+            if (dend == colon + 1 || *dend != '\0' || d < 30 || d > 2000) return false;
+            dur_ms = (int)d;
+        }
+
+        double hz = 0.0;
+        bool rest = false;
+        if (!parse_note_freq(tok, &hz, &rest)) return false;
+
+        notes[count].hz = hz;
+        notes[count].rest = rest;
+        notes[count].dur_ms = dur_ms;
+        count++;
+        total_ms += dur_ms;
+        if (total_ms > 5000) return false;
+    }
+
+    if (count == 0) return false;
+
+    const unsigned int sr = MARKEE_AUDIO_SAMPLE_RATE;
+    const int tail_ms = 260;
+    const size_t n = (size_t)((uint64_t)sr * (uint64_t)(total_ms + tail_ms) / 1000U);
+    double *mix = calloc(n, sizeof(double));
+    if (!mix) return false;
+
+    double cursor_sec = 0.0;
+    for (size_t i = 0; i < count; i++) {
+        double dur_sec = (double)notes[i].dur_ms / 1000.0;
+        if (!notes[i].rest) {
+            double decay = dur_sec * 1.1;
+            if (decay < 0.14) decay = 0.14;
+            if (decay > 0.35) decay = 0.35;
+            add_bell_note(mix, n, (double)sr, cursor_sec, notes[i].hz, 0.90,
+                          decay, 0.004, 0.25, 0.04, 0.06, 0.00, 0.50);
+        }
+        cursor_sec += dur_sec;
+    }
+
+    size_t fade_out = (size_t)(sr * 45U / 1000U);
+    if (fade_out > n / 4) fade_out = n / 4;
+    for (size_t i = 0; i < fade_out; i++) {
+        double frac = (double)(i + 1) / (double)fade_out;
+        mix[n - fade_out + i] *= 0.5 * (1.0 + cos(M_PI * frac));
+    }
+
+    double peak = 0.0;
+    for (size_t i = 0; i < n; i++) {
+        double a = fabs(mix[i]);
+        if (a > peak) peak = a;
+    }
+    double scale = (peak > 1e-9) ? (0.50 / peak) : 0.0;
+
+    int16_t *pcm = malloc(n * sizeof(int16_t));
+    if (!pcm) {
+        free(mix);
+        return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+        double v = mix[i] * scale * 32767.0;
+        if (v > 32767.0) v = 32767.0;
+        if (v < -32767.0) v = -32767.0;
+        pcm[i] = (int16_t)llround(v);
+    }
+
+    free(mix);
+    *out_samples = pcm;
+    *out_frame_count = n;
+    *out_sample_rate = sr;
+    return true;
+}
+
 MarkeeAudio *audio_create(bool open_device) {
     MarkeeAudio *audio = calloc(1, sizeof(*audio));
     if (!audio) return NULL;
@@ -301,6 +445,13 @@ void audio_destroy(MarkeeAudio *audio) {
         }
     }
 
+    if (audio->has_active_melody) {
+        UnloadSound(audio->active_melody_sound);
+        audio->has_active_melody = false;
+    }
+    free(audio->pending_melody_pcm);
+    audio->pending_melody_pcm = NULL;
+
     if (audio->device_owned && IsAudioDeviceReady()) {
         CloseAudioDevice();
     }
@@ -340,11 +491,50 @@ bool audio_trigger(MarkeeAudio *audio, int id, uint8_t volume) {
     return queued;
 }
 
+bool audio_trigger_melody(MarkeeAudio *audio, const char *melody, uint8_t volume,
+                          bool *out_played) {
+    if (out_played) *out_played = false;
+    if (!melody || !*melody) return false;
+    if (volume > 100) volume = 100;
+
+    int16_t *pcm = NULL;
+    size_t frames = 0;
+    unsigned int sr = 0;
+    if (!audio_synthesize_melody_pcm(melody, &pcm, &frames, &sr)) {
+        return false;
+    }
+    if (!audio) {
+        free(pcm);
+        return true;
+    }
+
+    pthread_mutex_lock(&audio->lock);
+    audio->trigger_count++;
+    audio->last_alert_id = 0;
+    audio->last_volume = volume;
+    if (audio->ready) {
+        free(audio->pending_melody_pcm);
+        audio->pending_melody_pcm = pcm;
+        audio->pending_melody_frames = frames;
+        audio->pending_melody_sr = sr;
+        audio->pending_melody_vol = volume;
+        if (out_played) *out_played = true;
+    } else {
+        free(pcm);
+    }
+    pthread_mutex_unlock(&audio->lock);
+    return true;
+}
+
 void audio_tick(MarkeeAudio *audio) {
     if (!audio || !audio->ready) return;
 
     AlertRequest batch[MARKEE_AUDIO_QUEUE_CAP];
     size_t count = 0;
+    int16_t *mel_pcm = NULL;
+    size_t mel_frames = 0;
+    unsigned int mel_sr = 0;
+    uint8_t mel_vol = 100;
 
     pthread_mutex_lock(&audio->lock);
     while (audio->q_count > 0 && count < MARKEE_AUDIO_QUEUE_CAP) {
@@ -352,7 +542,38 @@ void audio_tick(MarkeeAudio *audio) {
         audio->q_head = (audio->q_head + 1) % MARKEE_AUDIO_QUEUE_CAP;
         audio->q_count--;
     }
+    if (audio->pending_melody_pcm) {
+        mel_pcm = audio->pending_melody_pcm;
+        mel_frames = audio->pending_melody_frames;
+        mel_sr = audio->pending_melody_sr;
+        mel_vol = audio->pending_melody_vol;
+        audio->pending_melody_pcm = NULL;
+        audio->pending_melody_frames = 0;
+    }
     pthread_mutex_unlock(&audio->lock);
+
+    if (mel_pcm) {
+        if (audio->has_active_melody) {
+            StopSound(audio->active_melody_sound);
+            UnloadSound(audio->active_melody_sound);
+            audio->has_active_melody = false;
+        }
+        Wave w = {
+            .frameCount = (unsigned int)mel_frames,
+            .sampleRate = mel_sr,
+            .sampleSize = 16,
+            .channels = 1,
+            .data = mel_pcm
+        };
+        Sound snd = LoadSoundFromWave(w);
+        free(mel_pcm);
+        if (IsSoundValid(snd)) {
+            audio->active_melody_sound = snd;
+            audio->has_active_melody = true;
+            SetSoundVolume(snd, (float)mel_vol / 100.0f);
+            PlaySound(snd);
+        }
+    }
 
     for (size_t k = 0; k < count; k++) {
         int idx = batch[k].id - 1;

@@ -1004,7 +1004,18 @@ static void test_alert_audio_synthesis(void) {
     assert(memcmp(pcms[1], pcms[2], counts[1] < counts[2] ? counts[1] : counts[2]) != 0);
 
     for (int i = 0; i < MARKEE_ALERT_COUNT; i++) free(pcms[i]);
-    printf("[PASS] synthesized alert sounds (ding, chime, bell: clean edges, non-clipping, distinct)\n");
+
+    /* Custom melody synthesis (notes + rests + sharp/flat + invalid rejection) */
+    int16_t *mpcm = NULL;
+    size_t mframes = 0;
+    unsigned int msr = 0;
+    assert(audio_synthesize_melody_pcm("C5:120,E5:120,R:60,G#5:200,Bb4:150", &mpcm, &mframes, &msr));
+    assert(mpcm != NULL && msr == 44100U && mframes > 30000);
+    free(mpcm);
+    assert(!audio_synthesize_melody_pcm("Z9:100", &mpcm, &mframes, &msr));
+    assert(!audio_synthesize_melody_pcm("", &mpcm, &mframes, &msr));
+
+    printf("[PASS] synthesized alert sounds & custom melodies (ding, chime, bell, note sequences)\n");
 }
 
 static void test_alert_http_api(void) {
@@ -1144,6 +1155,19 @@ static void test_alert_http_api(void) {
 
     /* Failed requests did not increment trigger_count */
     assert(audio_get_trigger_count(audio) == 7);
+
+    /* 6. Custom melody via POST /alert */
+    const char *mel_req = "{\"melody\":\"C5:100,E5:100,G5:200\",\"volume\":75}";
+    r = do_request(port, "POST", "/alert", "application/json", mel_req, strlen(mel_req));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"melody\":\"C5:100,E5:100,G5:200\"") != NULL);
+    free(r.body);
+    assert(audio_get_trigger_count(audio) == 8);
+
+    const char *bad_mel = "{\"melody\":\"X5:100\"}";
+    r = do_request(port, "POST", "/alert", "application/json", bad_mel, strlen(bad_mel));
+    assert(r.status == 400);
+    free(r.body);
 
     server_stop(srv);
     audio_destroy(audio);

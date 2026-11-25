@@ -28,6 +28,17 @@ int audio_parse_alert_id(const char *s);
 bool audio_synthesize_pcm(int id, int16_t **out_samples, size_t *out_frame_count,
                           unsigned int *out_sample_rate);
 
+/* Synthesize a custom bell/chime note sequence such as "C5:120,E5:120,G5:240" (R for rest).
+ * Caller frees *out_samples with free(). */
+bool audio_synthesize_melody_pcm(const char *melody, int16_t **out_samples,
+                                 size_t *out_frame_count, unsigned int *out_sample_rate);
+
+/* Thread-safe: validate, synthesize, and queue playback of a custom note-sequence melody.
+ * Returns false if melody syntax is invalid; sets *out_played (if non-NULL) to whether
+ * audio hardware was ready to play it. */
+bool audio_trigger_melody(MarkeeAudio *audio, const char *melody, uint8_t volume,
+                          bool *out_played);
+
 /* Create the alert audio engine.
  * When open_device is true, initializes raylib audio and loads the synthesized sounds.
  * When open_device is false (e.g. --mute or unit tests), creates a silent engine that still
