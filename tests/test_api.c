@@ -555,6 +555,42 @@ static void test_draw_api(void) {
         free(r.body);
     }
 
+    /* 3c. Proportional font & text alignment (center / right) */
+    {
+        /* Proportional font trims empty columns: "iii" = 11px (vs 18px in 6x8), "!!!" = 5px */
+        int pw = draw_measure_text("iii", "prop");
+        assert(pw == 11 && pw < draw_measure_text("iii", "6x8"));
+        assert(draw_measure_text("!!!", "prop") == 5);
+
+        /* Right-aligned single glyph 'I' in prop font touches right edge near x=71 */
+        const char *align_json = "["
+            "{\"op\":\"clear\"},"
+            "{\"op\":\"text\",\"y\":4,\"text\":\"!\",\"font\":\"prop\",\"align\":\"right\",\"color\":\"red\"}"
+            "]";
+        r = do_request(port, "POST", "/draw", "application/json", align_json, strlen(align_json));
+        assert(r.status == 200);
+        free(r.body);
+        /* '!' in prop is 1px wide, so right-aligned lands at x=71 */
+        assert(display_get_pixel(&disp, 71, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 0 && pb == 0);
+        assert(display_get_pixel(&disp, 70, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 0 && pb == 0);
+
+        /* Center-aligned '!' in prop on 72px lands at x=(72-1)/2 = 35 */
+        const char *ctr_json = "[{\"op\":\"clear\"},{\"op\":\"text\",\"y\":4,\"text\":\"!\",\"font\":\"prop\",\"align\":\"center\",\"color\":\"green\"}]";
+        r = do_request(port, "POST", "/draw", "application/json", ctr_json, strlen(ctr_json));
+        assert(r.status == 200);
+        free(r.body);
+        assert(display_get_pixel(&disp, 35, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 255 && pb == 0);
+
+        /* Invalid align -> 400 */
+        const char *bad_align = "[{\"op\":\"text\",\"y\":4,\"text\":\"A\",\"align\":\"justify\"}]";
+        r = do_request(port, "POST", "/draw", "application/json", bad_align, strlen(bad_align));
+        assert(r.status == 400);
+        free(r.body);
+    }
+
     /* 4. Bare JSON object (not an array) and empty array [] are rejected with 400 */
     const char *bare_obj = "{ \"op\": \"line\", \"x1\": 0, \"y1\": 0, \"x2\": 5, \"y2\": 5, \"color\": \"white\" }";
     r = do_request(port, "POST", "/draw", "application/json", bare_obj, strlen(bare_obj));

@@ -379,7 +379,9 @@ Draws single-line bitmap text without wrapping (overflowing glyphs are clipped).
 | Field | Default | Description |
 |---|---|---|
 | `text` | **required** | String to render; characters outside printable ASCII (`0x20–0x7E`) render as `?` |
-| `x`, `y` | `0` | Top-left origin of the first glyph |
+| `x`, `y` | `0` | Top-left origin of the first glyph (or anchor when `align` is set) |
+| `w` | `0` | Optional box width used with `align` (`center`/`right`) when `clip` is not set |
+| `align` | `"left"` | Horizontal alignment: `"left"`, `"center"`, or `"right"` (aligns within `clip`, `[x, x+w)`, full screen if `x` omitted, or anchored at `x`) |
 | `font` | `"6x8"` | Font name (see [Fonts](#fonts)) |
 | `color` | `white` | Text color |
 | `scroll` | `false` | `true` enables horizontal marquee scrolling (see [Scrolling text](#scrolling-text)) |
@@ -415,6 +417,7 @@ Draws a PNG or GIF (`GIF87a`/`GIF89a`, static or animated) placed at `(x, y)` (t
 | `"6x8"` (default), `"5x7"`, `"medium"`, `"default"`, or unknown | 5×7 | 6 px | Printable ASCII (`0x20–0x7E`) | 12 chars/line; `y: 4` centers vertically |
 | `"8x8"`, `"large"`, `"bold"` | 6×7 (bold 5×7) | 7 px | Printable ASCII (`0x20–0x7E`) | 10 chars/line; `y: 4` centers vertically |
 | `"4x6"`, `"3x5"`, `"small"` | 3×5 | 4 px | `A–Z` (case-insensitive), `0–9`, space, `! . : - + /` (others blank) | 18 chars/line; two rows fit at `y: 1` and `y: 9` |
+| `"prop"`, `"proportional"`, `"compact"` | variable×7 | glyph width + 1 px | Printable ASCII (`0x20–0x7E`) | Variable (~14–24 chars/line; narrow glyphs like `i`, `l`, `1`, `:` save space) |
 
 Total rendered width is `strlen(text) × advance` pixels.
 

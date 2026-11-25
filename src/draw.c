@@ -295,7 +295,8 @@ static bool lookup_font3x5(char ch, uint8_t cols[3]) {
 typedef enum {
     FONT_4X6 = 0,
     FONT_6X8,
-    FONT_8X8
+    FONT_8X8,
+    FONT_PROP
 } FontStyle;
 
 static FontStyle resolve_font(const char *font) {
@@ -308,7 +309,26 @@ static FontStyle resolve_font(const char *font) {
         strcasecmp(font, "bold") == 0) {
         return FONT_8X8;
     }
+    if (strcasecmp(font, "prop") == 0 || strcasecmp(font, "proportional") == 0 ||
+        strcasecmp(font, "compact") == 0) {
+        return FONT_PROP;
+    }
     return FONT_6X8; /* "6x8", "5x7", "medium", "default" */
+}
+
+/* Compute non-empty column span [first..last] of a 5x7 glyph for proportional spacing. */
+static void prop_glyph_bounds(unsigned char uc, int *first_col, int *last_col) {
+    if (uc < 0x20 || uc > 0x7E) uc = '?';
+    const uint8_t *cols = FONT5X7[uc - 0x20];
+    int first = 5, last = -1;
+    for (int cx = 0; cx < 5; cx++) {
+        if (cols[cx] != 0) {
+            if (cx < first) first = cx;
+            if (cx > last) last = cx;
+        }
+    }
+    *first_col = first;
+    *last_col = last;
 }
 
 static void put_px_buf(uint8_t *buf, int buf_w, int buf_h, int x, int y, MarkeeColor c) {
@@ -322,6 +342,21 @@ static void put_px_buf(uint8_t *buf, int buf_w, int buf_h, int x, int y, MarkeeC
 int draw_measure_text(const char *text, const char *font) {
     if (!text || !*text) return 0;
     FontStyle fs = resolve_font(font);
+    if (fs == FONT_PROP) {
+        int w = 0;
+        for (const char *p = text; *p; p++) {
+            unsigned char uc = (unsigned char)*p;
+            if (uc == ' ') {
+                w += 3;
+            } else {
+                int c0 = 0, c1 = -1;
+                prop_glyph_bounds(uc, &c0, &c1);
+                int gw = (c1 >= c0) ? (c1 - c0 + 1) : 2;
+                w += gw + (p[1] ? 1 : 0);
+            }
+        }
+        return w;
+    }
     int advance = (fs == FONT_4X6) ? 4 : (fs == FONT_8X8 ? 7 : 6);
     int len = (int)strlen(text);
     return len * advance;
@@ -367,6 +402,29 @@ void draw_render_text_buf_clipped(uint8_t *buf, int buf_w, int buf_h,
                 }
             }
             cursor_x += 4;
+        } else if (fs == FONT_PROP) {
+            if (uc == ' ') {
+                cursor_x += 3;
+            } else {
+                if (uc < 0x20 || uc > 0x7E) uc = '?';
+                int c0 = 0, c1 = -1;
+                prop_glyph_bounds(uc, &c0, &c1);
+                if (c1 >= c0) {
+                    const uint8_t *cols = FONT5X7[uc - 0x20];
+                    for (int cx = c0; cx <= c1; cx++) {
+                        uint8_t bits = cols[cx];
+                        for (int cy = 0; cy < 7; cy++) {
+                            if (bits & (1U << cy)) {
+                                put_px_clipped(buf, buf_w, buf_h, cursor_x + (cx - c0), y + cy,
+                                               cx0, cy0, cx1, cy1, color);
+                            }
+                        }
+                    }
+                    cursor_x += (c1 - c0 + 1) + 1;
+                } else {
+                    cursor_x += 3;
+                }
+            }
         } else {
             if (uc < 0x20 || uc > 0x7E) uc = '?';
             const uint8_t *cols = FONT5X7[uc - 0x20];
@@ -950,10 +1008,26 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
             snprintf(err_buf, err_size, "'text' op requires string field 'text'");
             return false;
         }
+        const JsonValue *jx = json_obj_get(obj, "x");
+        const JsonValue *jw = json_obj_get(obj, "w");
         int x = opt_int(obj, "x", 0);
         int y = opt_int(obj, "y", 0);
+        int box_w = opt_int(obj, "w", 0);
         const char *font = json_as_string(json_obj_get(obj, "font"));
         if (!font || !*font) font = "6x8";
+
+        const char *align = json_as_string(json_obj_get(obj, "align"));
+        int align_mode = 0; /* 0 = left, 1 = center, 2 = right */
+        if (align && *align) {
+            if (strcasecmp(align, "left") == 0) align_mode = 0;
+            else if (strcasecmp(align, "center") == 0 || strcasecmp(align, "middle") == 0) align_mode = 1;
+            else if (strcasecmp(align, "right") == 0) align_mode = 2;
+            else {
+                snprintf(err_buf, err_size,
+                         "'text' op 'align' must be 'left', 'center', or 'right'");
+                return false;
+            }
+        }
 
         bool scroll = false;
         const JsonValue *jscroll = json_obj_get(obj, "scroll");
@@ -981,6 +1055,19 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
                 return false;
             }
             has_clip = true;
+        }
+
+        int tw = draw_measure_text(text, font);
+        if (align_mode == 1) {
+            if (has_clip) x = clip_x + (clip_w - tw) / 2;
+            else if (jw && box_w > 0) x = x + (box_w - tw) / 2;
+            else if (!jx) x = (bw - tw) / 2;
+            else x = x - tw / 2;
+        } else if (align_mode == 2) {
+            if (has_clip) x = clip_x + clip_w - tw;
+            else if (jw && box_w > 0) x = x + box_w - tw;
+            else if (!jx) x = bw - tw;
+            else x = x - tw;
         }
 
         bool hs = false, hf = false;
