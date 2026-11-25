@@ -41,12 +41,13 @@ MarkeeLayout renderer_compute_layout(int width, int height, float zoom,
     L.matrix_w = L.cell_pitch * (float)width;
     L.matrix_h = L.cell_pitch * (float)height;
 
-    /* Physical plastic bezel padding modeled after the BUSY Bar (168.6 x 55.2 mm around 158.4 x 35.2 mm).
-     * Keeping bezel thickness constant in physical units ensures any custom resolution keeps a realistic
-     * molded plastic frame while 72x16 @ zoom=1.0 matches the original dimensions identically. */
+    /* Bezel padding around the LED matrix, sized from the reference body width
+     * (168.6 mm around a 158.4 mm matrix) and kept constant in physical units so any custom
+     * resolution keeps the same frame thickness. The same padding is used vertically so the
+     * gap between the LEDs and the frame is even on all four sides. */
     float ref_matrix_h = L.cell_pitch * (float)MARKEE_DEFAULT_HEIGHT;
     float bezel_w_total = ref_matrix_w * (MARKEE_REF_BODY_W_MM / MARKEE_REF_MATRIX_W_MM - 1.0f) + eff_dpi * 0.18f;
-    float bezel_h_total = ref_matrix_h * (MARKEE_REF_BODY_H_MM / MARKEE_REF_MATRIX_H_MM - 1.0f) + eff_dpi * 0.10f;
+    float bezel_h_total = bezel_w_total;
 
     L.ref_body_h = ref_matrix_h + bezel_h_total;
     L.body_w = L.matrix_w + bezel_w_total;
@@ -183,15 +184,6 @@ void renderer_draw(const MarkeeLayout *L,
 
     /* Outer subtle contour line */
     DrawRectangleRoundedLinesEx(body, body_r, 16, fmaxf(1.0f, 1.2f * z), (Color){132, 129, 122, 220});
-
-    /* Signature subtle orange accent notches on left & right shell edges */
-    float accent_h = fminf(L->body_h * 0.24f, L->ref_body_h * 0.35f);
-    float accent_w = fmaxf(2.0f, 3.0f * z);
-    float accent_y = L->body_y + (L->body_h - accent_h) * 0.5f;
-    DrawRectangleRounded((Rectangle){L->body_x + 1.5f * z, accent_y, accent_w, accent_h},
-                         1.0f, 6, (Color){242, 92, 25, 225});
-    DrawRectangleRounded((Rectangle){L->body_x + L->body_w - 1.5f * z - accent_w, accent_y, accent_w, accent_h},
-                         1.0f, 6, (Color){242, 92, 25, 225});
 
     /* 4. Inset black polycarbonate front faceplate with recessed bezel */
     float bpad = 2.0f * z;

@@ -23,14 +23,12 @@
 #define MARKEE_MIN_ZOOM              0.1f
 #define MARKEE_MAX_ZOOM              10.0f
 
-/* Real BUSY Bar physical proportions (mm) used for plastic enclosure ratios:
- *   Body:   168.6 x 55.2 mm
- *   Matrix: 158.4 x 35.2 mm (72x16 @ 2.2 mm pitch)
- */
+/* Reference widths (mm) that set the enclosure's bezel thickness:
+ *   Body:   168.6 mm wide
+ *   Matrix: 158.4 mm wide (72 columns @ 2.2 mm pitch)
+ * The same bezel is used on all four sides (see renderer_compute_layout). */
 #define MARKEE_REF_MATRIX_W_MM       158.4f
-#define MARKEE_REF_MATRIX_H_MM       35.2f
 #define MARKEE_REF_BODY_W_MM         168.6f
-#define MARKEE_REF_BODY_H_MM         55.2f
 
 /* Fallback logical DPI if monitor EDID physical width is unavailable */
 #define MARKEE_DEFAULT_DPI           110.0f

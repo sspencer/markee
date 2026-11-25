@@ -53,6 +53,25 @@ static bool parse_zoom(const char *s, float *out_zoom) {
     return true;
 }
 
+/* Strict TCP port parser: whole string must be an integer 0..65535 (0 = ephemeral). */
+static bool parse_port(const char *s, uint16_t *out_port) {
+    if (!s || !*s || !out_port) return false;
+    char *end = NULL;
+    long p = strtol(s, &end, 10);
+    if (end == s || *end != '\0' || p < 0 || p > 65535) return false;
+    *out_port = (uint16_t)p;
+    return true;
+}
+
+static bool parse_dpi(const char *s, float *out_dpi) {
+    if (!s || !*s || !out_dpi) return false;
+    char *end = NULL;
+    float d = strtof(s, &end);
+    if (end == s || *end != '\0' || !(d > 0.0f) || d > 10000.0f) return false;
+    *out_dpi = d;
+    return true;
+}
+
 static bool parse_pixel_shape(const char *s, MarkeePixelShape *out_shape) {
     if (!s || !out_shape) return false;
     if (strcmp(s, "square") == 0) {
@@ -80,7 +99,7 @@ static void print_usage(const char *prog) {
            "  -s, --shape <style>     Pixel display style: square or circle (default: square)\n"
            "  -m, --monochrome <hex>  Apply BT.709 perceptual monochrome filter (e.g. #00ff00,\n"
            "                          #ffbf00, amber, red, green)\n"
-           "  -H, --host <ip>         Bind IP address (default: %s)\n"
+           "  -H, --host <addr>       Bind address: IPv4, IPv6, or hostname (default: %s)\n"
            "  -p, --port <port>       TCP port to listen on (default: %d, or MARKEE_PORT)\n"
            "      --dpi <value>       Override monitor logical DPI for physical sizing\n"
            "      --blank             Start with a blank display instead of the startup demo\n"
@@ -144,9 +163,9 @@ int main(int argc, char **argv) {
     bool headless = false;
 
     const char *env_port = getenv("MARKEE_PORT");
-    if (env_port && *env_port) {
-        long p = strtol(env_port, NULL, 10);
-        if (p >= 0 && p <= 65535) port = (uint16_t)p;
+    if (env_port && *env_port && !parse_port(env_port, &port)) {
+        fprintf(stderr, "Invalid MARKEE_PORT '%s' (expected an integer 0..65535)\n", env_port);
+        return 1;
     }
 
     for (int i = 1; i < argc; i++) {
@@ -183,16 +202,13 @@ int main(int argc, char **argv) {
         } else if ((strcmp(argv[i], "-H") == 0 || strcmp(argv[i], "--host") == 0) && i + 1 < argc) {
             host = argv[++i];
         } else if ((strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--port") == 0) && i + 1 < argc) {
-            long p = strtol(argv[++i], NULL, 10);
-            if (p < 0 || p > 65535) {
-                fprintf(stderr, "Invalid port: %s\n", argv[i]);
+            if (!parse_port(argv[++i], &port)) {
+                fprintf(stderr, "Invalid port '%s' (expected an integer 0..65535)\n", argv[i]);
                 return 1;
             }
-            port = (uint16_t)p;
         } else if (strcmp(argv[i], "--dpi") == 0 && i + 1 < argc) {
-            override_dpi = strtof(argv[++i], NULL);
-            if (override_dpi <= 0.0f) {
-                fprintf(stderr, "Invalid DPI value: %s\n", argv[i]);
+            if (!parse_dpi(argv[++i], &override_dpi)) {
+                fprintf(stderr, "Invalid DPI value '%s' (expected a positive number)\n", argv[i]);
                 return 1;
             }
         } else if (strcmp(argv[i], "--blank") == 0) {
@@ -233,17 +249,20 @@ int main(int argc, char **argv) {
     }
 
     uint16_t actual_port = server_get_port(srv);
+    const bool is_v6 = strchr(host, ':') != NULL;
+    const char *lb = is_v6 ? "[" : "";
+    const char *rb = is_v6 ? "]" : "";
     if (mono_enabled) {
-        printf("markee (%dx%d, zoom=%.2fx, pixels=%s, monochrome=#%02x%02x%02x) API listening on http://%s:%u\n",
+        printf("markee (%dx%d, zoom=%.2fx, pixels=%s, monochrome=#%02x%02x%02x) API listening on http://%s%s%s:%u\n",
                width, height, zoom,
                pixel_shape == MARKEE_PIXEL_CIRCLE ? "circle" : "square",
                mono_color.r, mono_color.g, mono_color.b,
-               host, (unsigned)actual_port);
+               lb, host, rb, (unsigned)actual_port);
     } else {
-        printf("markee (%dx%d, zoom=%.2fx, pixels=%s) API listening on http://%s:%u\n",
+        printf("markee (%dx%d, zoom=%.2fx, pixels=%s) API listening on http://%s%s%s:%u\n",
                width, height, zoom,
                pixel_shape == MARKEE_PIXEL_CIRCLE ? "circle" : "square",
-               host, (unsigned)actual_port);
+               lb, host, rb, (unsigned)actual_port);
     }
     printf("  POST /frame   Upload %dx%d PNG (or %zu-byte raw RGB24)\n",
            width, height, display.frame_bytes);

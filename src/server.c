@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <netdb.h>
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <pthread.h>
@@ -67,10 +68,10 @@ static bool send_all(int fd, const void *buf, size_t len) {
     return true;
 }
 
-static bool send_response(int fd, int status, const char *status_text,
-                          const char *content_type, const void *body, size_t body_len,
-                          bool keep_alive) {
-    char header[512];
+static bool send_response_ex(int fd, int status, const char *status_text,
+                             const char *content_type, const void *body, size_t body_len,
+                             bool keep_alive, const char *extra_headers) {
+    char header[768];
     int hlen = snprintf(header, sizeof(header),
                         "HTTP/1.1 %d %s\r\n"
                         "Content-Type: %s\r\n"
@@ -79,9 +80,11 @@ static bool send_response(int fd, int status, const char *status_text,
                         "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
                         "Access-Control-Allow-Headers: Content-Type, Accept\r\n"
                         "Connection: %s\r\n"
+                        "%s"
                         "\r\n",
                         status, status_text, content_type, body_len,
-                        keep_alive ? "keep-alive" : "close");
+                        keep_alive ? "keep-alive" : "close",
+                        extra_headers ? extra_headers : "");
     if (hlen <= 0 || (size_t)hlen >= sizeof(header)) return false;
     if (!send_all(fd, header, (size_t)hlen)) return false;
     if (body && body_len > 0) {
@@ -90,10 +93,64 @@ static bool send_response(int fd, int status, const char *status_text,
     return true;
 }
 
+static bool send_response(int fd, int status, const char *status_text,
+                          const char *content_type, const void *body, size_t body_len,
+                          bool keep_alive) {
+    return send_response_ex(fd, status, status_text, content_type, body, body_len,
+                            keep_alive, NULL);
+}
+
 static bool send_json(int fd, int status, const char *status_text,
                       const char *json, bool keep_alive) {
     return send_response(fd, status, status_text, "application/json",
                          json, strlen(json), keep_alive);
+}
+
+/* Escape a string for safe embedding inside a JSON string literal.
+ * Output is always NUL-terminated and truncated (on a character boundary) to fit. */
+static void json_escape(const char *in, char *out, size_t out_size) {
+    if (!out || out_size == 0) return;
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)(in ? in : ""); *p; p++) {
+        char tmp[8];
+        const char *rep = NULL;
+        size_t rlen;
+        switch (*p) {
+            case '"':  rep = "\\\""; break;
+            case '\\': rep = "\\\\"; break;
+            case '\n': rep = "\\n"; break;
+            case '\r': rep = "\\r"; break;
+            case '\t': rep = "\\t"; break;
+            default:
+                if (*p < 0x20) {
+                    snprintf(tmp, sizeof(tmp), "\\u%04x", *p);
+                    rep = tmp;
+                }
+                break;
+        }
+        if (rep) {
+            rlen = strlen(rep);
+        } else {
+            tmp[0] = (char)*p;
+            tmp[1] = '\0';
+            rep = tmp;
+            rlen = 1;
+        }
+        if (o + rlen >= out_size) break;
+        memcpy(out + o, rep, rlen);
+        o += rlen;
+    }
+    out[o] = '\0';
+}
+
+/* Send {"error":"<msg>"} with msg JSON-escaped. */
+static bool send_error(int fd, int status, const char *status_text, const char *msg,
+                       bool keep_alive) {
+    char esc[512];
+    char json[600];
+    json_escape(msg, esc, sizeof(esc));
+    snprintf(json, sizeof(json), "{\"error\":\"%s\"}", esc);
+    return send_json(fd, status, status_text, json, keep_alive);
 }
 
 /* Case-insensitive substring check */
@@ -106,7 +163,38 @@ static bool contains_ci(const char *haystack, const char *needle) {
     return false;
 }
 
-/* Extract a query parameter value from "a=1&b=2" */
+static int hex_val(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* URL-decode src[0..len) into out ('+' -> space, %XX -> byte). Invalid escapes are kept
+ * literally. Returns false if the decoded value does not fit in out. */
+static bool url_decode(const char *src, size_t len, char *out, size_t out_size) {
+    size_t o = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = src[i];
+        if (c == '+') {
+            c = ' ';
+        } else if (c == '%' && i + 2 < len) {
+            int hi = hex_val(src[i + 1]);
+            int lo = hex_val(src[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                c = (char)((hi << 4) | lo);
+                i += 2;
+            }
+        }
+        if (o + 1 >= out_size) return false;
+        out[o++] = c;
+    }
+    out[o] = '\0';
+    return true;
+}
+
+/* Extract and URL-decode a query parameter value from "a=1&b=2".
+ * Returns false if the key is absent or its decoded value does not fit in out. */
 static bool query_get(const char *query, const char *key, char *out, size_t out_size) {
     if (!query || !key || !out || out_size == 0) return false;
     size_t klen = strlen(key);
@@ -115,11 +203,7 @@ static bool query_get(const char *query, const char *key, char *out, size_t out_
         const char *amp = strchr(p, '&');
         size_t seg_len = amp ? (size_t)(amp - p) : strlen(p);
         if (seg_len > klen && strncmp(p, key, klen) == 0 && p[klen] == '=') {
-            size_t vlen = seg_len - klen - 1;
-            if (vlen >= out_size) vlen = out_size - 1;
-            memcpy(out, p + klen + 1, vlen);
-            out[vlen] = '\0';
-            return true;
+            return url_decode(p + klen + 1, seg_len - klen - 1, out, out_size);
         }
         if (!amp) break;
         p = amp + 1;
@@ -136,62 +220,37 @@ static bool parse_int_param(const char *s, int *out) {
     return true;
 }
 
-static bool parse_hex_color(const char *s, uint8_t *r, uint8_t *g, uint8_t *b) {
-    if (!s) return false;
-    if (*s == '#') s++;
-    /* Also handle URL-encoded %23 prefix */
-    if (s[0] == '%' && s[1] == '2' && s[2] == '3') s += 3;
-    if (strlen(s) != 6) return false;
-    for (int i = 0; i < 6; i++) {
-        if (!isxdigit((unsigned char)s[i])) return false;
-    }
-    unsigned int val = 0;
-    if (sscanf(s, "%06x", &val) != 1) return false;
-    *r = (uint8_t)((val >> 16) & 0xFFU);
-    *g = (uint8_t)((val >> 8) & 0xFFU);
-    *b = (uint8_t)(val & 0xFFU);
+/* Parse a color from a (URL-decoded) query parameter or JSON string using the same rules
+ * as /draw: hex with optional '#' or '0x' prefix, 3 or 6 digits, or a named color. */
+static bool parse_color_param(const char *s, MarkeeColor *out) {
+    if (!s || !out) return false;
+    return draw_parse_color_string(s, out);
+}
+
+static bool parse_color_rgb(const char *s, uint8_t *r, uint8_t *g, uint8_t *b) {
+    MarkeeColor c;
+    if (!parse_color_param(s, &c)) return false;
+    *r = c.r;
+    *g = c.g;
+    *b = c.b;
     return true;
 }
 
-/* Minimal JSON integer field extractor: finds "key": <int> */
-static bool json_get_int(const char *json, const char *key, int *out) {
-    if (!json || !key || !out) return false;
-    char pat[64];
-    snprintf(pat, sizeof(pat), "\"%s\"", key);
-    const char *p = strstr(json, pat);
-    if (!p) return false;
-    p += strlen(pat);
-    while (*p && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
-    if (*p != ':') return false;
-    p++;
-    while (*p && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
-    char *end = NULL;
-    long v = strtol(p, &end, 10);
-    if (end == p) return false;
-    *out = (int)v;
-    return true;
+/* Parse a request body as JSON. Returns NULL if there is no body or it is not valid JSON.
+ * Caller frees with json_free(). */
+static JsonValue *parse_body_json(const uint8_t *body, size_t len) {
+    if (!body || len == 0) return NULL;
+    return json_parse((const char *)body, len, NULL, 0);
 }
 
-/* Minimal JSON string field extractor: finds "key": "value" */
-static bool json_get_str(const char *json, const char *key, char *out, size_t out_size) {
-    if (!json || !key || !out || out_size == 0) return false;
-    char pat[64];
-    snprintf(pat, sizeof(pat), "\"%s\"", key);
-    const char *p = strstr(json, pat);
-    if (!p) return false;
-    p += strlen(pat);
-    while (*p && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
-    if (*p != ':') return false;
-    p++;
-    while (*p && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
-    if (*p != '"') return false;
-    p++;
-    const char *end = strchr(p, '"');
-    if (!end) return false;
-    size_t len = (size_t)(end - p);
-    if (len >= out_size) len = out_size - 1;
-    memcpy(out, p, len);
-    out[len] = '\0';
+/* Read an integer member from a JSON object. Accepts only whole numbers. */
+static bool json_member_int(const JsonValue *obj, const char *key, int *out) {
+    if (!obj || obj->type != JSON_OBJECT) return false;
+    const JsonValue *v = json_obj_get(obj, key);
+    double d = 0.0;
+    if (!v || !json_as_double(v, &d)) return false;
+    if (d != (double)(long)d || d < -2147483648.0 || d > 2147483647.0) return false;
+    *out = (int)d;
     return true;
 }
 
@@ -201,6 +260,7 @@ typedef struct {
     uint8_t buf[65536];
     size_t len;
     size_t pos;
+    bool overflow; /* set when a line exceeded the caller's buffer */
 } SockReader;
 
 static bool reader_fill(SockReader *r) {
@@ -253,7 +313,10 @@ static bool reader_read_line(SockReader *r, char *out, size_t max_len) {
                 out[n] = '\0';
                 return true;
             }
-            if (n + 1 >= max_len) return false;
+            if (n + 1 >= max_len) {
+                r->overflow = true;
+                return false;
+            }
             out[n++] = c;
         }
         if (!reader_fill(r)) return false;
@@ -314,35 +377,50 @@ static bool read_chunked_body(SockReader *r, uint8_t **out_buf, size_t *out_len)
     }
 }
 
-/* Read one HTTP request. Returns: 1 = ok, 0 = clean EOF, -1 = protocol/size error */
+#define READ_OK 1
+#define READ_EOF 0
+#define READ_BAD -1
+#define READ_URI_TOO_LONG -2
+
+/* Read one HTTP request. Returns READ_OK, READ_EOF (clean close / timeout),
+ * READ_BAD (protocol or size error), or READ_URI_TOO_LONG. */
 static int read_http_request(SockReader *r, HttpRequest *req) {
     memset(req, 0, sizeof(*req));
+    r->overflow = false;
 
     char line[1024];
     if (!reader_read_line(r, line, sizeof(line))) {
-        return 0;
+        return r->overflow ? READ_URI_TOO_LONG : READ_EOF;
     }
     if (line[0] == '\0') {
-        if (!reader_read_line(r, line, sizeof(line))) return 0;
+        if (!reader_read_line(r, line, sizeof(line))) {
+            return r->overflow ? READ_URI_TOO_LONG : READ_EOF;
+        }
     }
 
-    char target[768] = {0};
-    char version[16] = {0};
-    if (sscanf(line, "%15s %767s %15s", req->method, target, version) != 3) {
-        return -1;
+    char method[32] = {0};
+    char target[1024] = {0};
+    char version[32] = {0};
+    if (sscanf(line, "%31s %1023s %31s", method, target, version) != 3 ||
+        strncmp(version, "HTTP/1.", 7) != 0 || strlen(method) >= sizeof(req->method)) {
+        return READ_BAD;
     }
+    snprintf(req->method, sizeof(req->method), "%s", method);
 
     req->keep_alive = (strcmp(version, "HTTP/1.1") == 0);
 
     char *q = strchr(target, '?');
     if (q) {
         *q = '\0';
+        if (strlen(q + 1) >= sizeof(req->query)) return READ_URI_TOO_LONG;
         snprintf(req->query, sizeof(req->query), "%s", q + 1);
     }
+    if (strlen(target) >= sizeof(req->path)) return READ_URI_TOO_LONG;
     snprintf(req->path, sizeof(req->path), "%s", target);
 
     size_t header_bytes = strlen(line);
-    while (reader_read_line(r, line, sizeof(line))) {
+    for (;;) {
+        if (!reader_read_line(r, line, sizeof(line))) return READ_BAD;
         header_bytes += strlen(line) + 2;
         if (header_bytes > MARKEE_MAX_HEADER_BYTES) return -1;
         if (line[0] == '\0') break;
@@ -400,37 +478,68 @@ static bool has_png_magic(const uint8_t *data, size_t len) {
     return data && len >= 8 && memcmp(data, sig, 8) == 0;
 }
 
-static bool extract_rgb_params(const HttpRequest *req, uint8_t *r, uint8_t *g, uint8_t *b) {
+/* Color for /fill and /pixel, from (in order): ?color=, ?r=&g=&b=, JSON "color", JSON r/g/b.
+ * body_json may be NULL. */
+static bool extract_rgb_params(const HttpRequest *req, const JsonValue *body_json,
+                               uint8_t *r, uint8_t *g, uint8_t *b) {
     char val[64];
     if (query_get(req->query, "color", val, sizeof(val))) {
-        return parse_hex_color(val, r, g, b);
+        return parse_color_rgb(val, r, g, b);
     }
     int ri = 0, gi = 0, bi = 0;
+    bool have = false;
     if (query_get(req->query, "r", val, sizeof(val)) && parse_int_param(val, &ri) &&
         query_get(req->query, "g", val, sizeof(val)) && parse_int_param(val, &gi) &&
         query_get(req->query, "b", val, sizeof(val)) && parse_int_param(val, &bi)) {
-        if (ri < 0 || ri > 255 || gi < 0 || gi > 255 || bi < 0 || bi > 255) return false;
-        *r = (uint8_t)ri;
-        *g = (uint8_t)gi;
-        *b = (uint8_t)bi;
-        return true;
-    }
-    if (req->body && req->body_len > 0) {
-        const char *jb = (const char *)req->body;
-        if (json_get_str(jb, "color", val, sizeof(val))) {
-            return parse_hex_color(val, r, g, b);
+        have = true;
+    } else if (body_json && body_json->type == JSON_OBJECT) {
+        const JsonValue *jcol = json_obj_get(body_json, "color");
+        if (jcol) {
+            const char *s = json_as_string(jcol);
+            return s ? parse_color_rgb(s, r, g, b) : false;
         }
-        if (json_get_int(jb, "r", &ri) &&
-            json_get_int(jb, "g", &gi) &&
-            json_get_int(jb, "b", &bi)) {
-            if (ri < 0 || ri > 255 || gi < 0 || gi > 255 || bi < 0 || bi > 255) return false;
-            *r = (uint8_t)ri;
-            *g = (uint8_t)gi;
-            *b = (uint8_t)bi;
-            return true;
-        }
+        have = json_member_int(body_json, "r", &ri) &&
+               json_member_int(body_json, "g", &gi) &&
+               json_member_int(body_json, "b", &bi);
     }
-    return false;
+    if (!have) return false;
+    if (ri < 0 || ri > 255 || gi < 0 || gi > 255 || bi < 0 || bi > 255) return false;
+    *r = (uint8_t)ri;
+    *g = (uint8_t)gi;
+    *b = (uint8_t)bi;
+    return true;
+}
+
+/* Known paths and the methods each supports (used for 405 + Allow). */
+typedef struct {
+    const char *path;
+    const char *allow;
+} RouteMethods;
+
+static const RouteMethods KNOWN_ROUTES[] = {
+    {"/",           "GET, OPTIONS"},
+    {"/info",       "GET, OPTIONS"},
+    {"/api/info",   "GET, OPTIONS"},
+    {"/frame",      "GET, POST, PUT, DELETE, OPTIONS"},
+    {"/api/frame",  "GET, POST, PUT, DELETE, OPTIONS"},
+    {"/frame.png",  "GET, POST, PUT, OPTIONS"},
+    {"/frame.rgb",  "GET, POST, PUT, OPTIONS"},
+    {"/clear",      "POST, OPTIONS"},
+    {"/fill",       "POST, OPTIONS"},
+    {"/pixel",      "GET, POST, PUT, OPTIONS"},
+    {"/draw",       "POST, PUT, OPTIONS"},
+    {"/api/draw",   "POST, PUT, OPTIONS"},
+    {"/monochrome", "GET, POST, PUT, DELETE, OPTIONS"},
+    {"/mono",       "GET, POST, PUT, DELETE, OPTIONS"},
+    {"/brightness", "GET, POST, PUT, OPTIONS"},
+    {"/demo",       "POST, OPTIONS"},
+};
+
+static const char *route_allow(const char *path) {
+    for (size_t i = 0; i < sizeof(KNOWN_ROUTES) / sizeof(KNOWN_ROUTES[0]); i++) {
+        if (strcmp(path, KNOWN_ROUTES[i].path) == 0) return KNOWN_ROUTES[i].allow;
+    }
+    return NULL;
 }
 
 static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
@@ -586,9 +695,12 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
     /* POST /fill */
     if (strcmp(req->method, "POST") == 0 && strcmp(req->path, "/fill") == 0) {
         uint8_t r = 0, g = 0, b = 0;
-        if (!extract_rgb_params(req, &r, &g, &b)) {
+        JsonValue *bj = parse_body_json(req->body, req->body_len);
+        bool got = extract_rgb_params(req, bj, &r, &g, &b);
+        json_free(bj);
+        if (!got) {
             send_json(fd, 400, "Bad Request",
-                      "{\"error\":\"provide ?color=RRGGBB, ?r=..&g=..&b=.., or JSON {r,g,b}\"}",
+                      "{\"error\":\"provide ?color=(RRGGBB, 0xRRGGBB, RGB, or name), ?r=..&g=..&b=.., or JSON {color} / {r,g,b}\"}",
                       ka);
             return;
         }
@@ -635,14 +747,16 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         int x = -1, y = -1;
         bool has_xy = (query_get(req->query, "x", xv, sizeof(xv)) && parse_int_param(xv, &x) &&
                        query_get(req->query, "y", yv, sizeof(yv)) && parse_int_param(yv, &y));
-        if (!has_xy && req->body && req->body_len > 0) {
-            has_xy = json_get_int((const char *)req->body, "x", &x) &&
-                     json_get_int((const char *)req->body, "y", &y);
+        JsonValue *bj = parse_body_json(req->body, req->body_len);
+        if (!has_xy) {
+            has_xy = json_member_int(bj, "x", &x) && json_member_int(bj, "y", &y);
         }
         uint8_t r = 0, g = 0, b = 0;
-        if (!has_xy || !extract_rgb_params(req, &r, &g, &b)) {
+        bool got = has_xy && extract_rgb_params(req, bj, &r, &g, &b);
+        json_free(bj);
+        if (!got) {
             send_json(fd, 400, "Bad Request",
-                      "{\"error\":\"provide x, y and color (RRGGBB or r,g,b)\"}", ka);
+                      "{\"error\":\"provide x, y and color (RRGGBB, 0xRRGGBB, RGB, name, or r,g,b)\"}", ka);
             return;
         }
         if (display_set_pixel(disp, x, y, r, g, b, true) != MARKEE_OK) {
@@ -673,10 +787,7 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         char err[256] = {0};
         if (!draw_exec_json(disp, (const char *)req->body, req->body_len,
                             &executed, err, sizeof(err))) {
-            char resp[320];
-            snprintf(resp, sizeof(resp), "{\"error\":\"%s\"}",
-                     err[0] ? err : "invalid draw request");
-            send_json(fd, 400, "Bad Request", resp, ka);
+            send_error(fd, 400, "Bad Request", err[0] ? err : "invalid draw request", ka);
             return;
         }
         char json[128];
@@ -721,17 +832,10 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         char val[64];
 
         if (query_get(req->query, "color", val, sizeof(val))) {
-            /* Decode leading %23 for URL-encoded '#' */
-            const char *s = val;
-            char unesc[64];
-            if (s[0] == '%' && s[1] == '2' && s[2] == '3') {
-                snprintf(unesc, sizeof(unesc), "#%s", s + 3);
-                s = unesc;
-            }
-            if (strcasecmp(s, "none") == 0 || strcasecmp(s, "off") == 0 ||
-                strcasecmp(s, "false") == 0 || strcasecmp(s, "null") == 0) {
+            if (strcasecmp(val, "none") == 0 || strcasecmp(val, "off") == 0 ||
+                strcasecmp(val, "false") == 0 || strcasecmp(val, "null") == 0) {
                 disable = true;
-            } else if (draw_parse_color_string(s, &mc)) {
+            } else if (parse_color_param(val, &mc)) {
                 has_color = true;
             }
         } else if (query_get(req->query, "enabled", val, sizeof(val)) &&
@@ -833,18 +937,18 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         if (query_get(req->query, "value", val, sizeof(val)) && parse_int_param(val, &b)) {
             ok = true;
         } else if (req->body && req->body_len > 0) {
-            const char *s = (const char *)req->body;
-            if (json_get_int(s, "brightness", &b) || json_get_int(s, "value", &b)) {
-                ok = true;
-            } else {
-                while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
-                char *end = NULL;
-                long v = strtol(s, &end, 10);
-                if (end != s) {
-                    b = (int)v;
+            /* JSON object {"brightness":N} / {"value":N}, or a bare number such as "75" */
+            JsonValue *bj = parse_body_json(req->body, req->body_len);
+            if (bj && bj->type == JSON_OBJECT) {
+                ok = json_member_int(bj, "brightness", &b) || json_member_int(bj, "value", &b);
+            } else if (bj && bj->type == JSON_NUMBER) {
+                double d = bj->u.nval;
+                if (d == (double)(long)d && d >= -1000.0 && d <= 1000.0) {
+                    b = (int)d;
                     ok = true;
                 }
             }
+            json_free(bj);
         }
         if (!ok || b < 0 || b > 100) {
             send_json(fd, 400, "Bad Request",
@@ -873,6 +977,20 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         return;
     }
 
+    const char *allow = route_allow(req->path);
+    if (allow) {
+        char hdr[128];
+        char body[192];
+        snprintf(hdr, sizeof(hdr), "Allow: %s\r\n", allow);
+        /* Method came from the client: escape it rather than embedding raw. */
+        char esc_method[64];
+        json_escape(req->method, esc_method, sizeof(esc_method));
+        snprintf(body, sizeof(body), "{\"error\":\"method %s not allowed; allowed: %s\"}",
+                 esc_method, allow);
+        send_response_ex(fd, 405, "Method Not Allowed", "application/json",
+                         body, strlen(body), ka, hdr);
+        return;
+    }
     send_json(fd, 404, "Not Found", "{\"error\":\"endpoint not found\"}", ka);
 }
 
@@ -893,15 +1011,25 @@ static void *client_thread_main(void *arg) {
     reader.fd = fd;
     reader.len = 0;
     reader.pos = 0;
+    reader.overflow = false;
 
     while (atomic_load(&srv->running)) {
         HttpRequest req;
         int rc = read_http_request(&reader, &req);
-        if (rc == 0) {
+        if (rc == READ_EOF) {
+            free(req.body);
             break;
         }
-        if (rc < 0) {
+        if (rc == READ_URI_TOO_LONG) {
+            send_json(fd, 414, "URI Too Long",
+                      "{\"error\":\"request target too long (max 255-byte path, 511-byte query)\"}",
+                      false);
+            free(req.body);
+            break;
+        }
+        if (rc != READ_OK) {
             send_json(fd, 400, "Bad Request", "{\"error\":\"malformed HTTP request\"}", false);
+            free(req.body);
             break;
         }
 
@@ -927,7 +1055,7 @@ static void *accept_thread_main(void *arg) {
         if (pr <= 0) continue;
 
         if (pfd.revents & POLLIN) {
-            struct sockaddr_in caddr;
+            struct sockaddr_storage caddr;
             socklen_t clen = sizeof(caddr);
             int cfd = accept(srv->listen_fd, (struct sockaddr *)&caddr, &clen);
             if (cfd < 0) continue;
@@ -968,40 +1096,53 @@ MarkeeServer *server_start(MarkeeDisplay *disp, const char *host, uint16_t port)
     if (!disp) return NULL;
     if (!host || !*host) host = MARKEE_DEFAULT_HOST;
 
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    /* Resolve host (IPv4 literal, IPv6 literal, or hostname) and bind the first usable address. */
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE | AI_NUMERICSERV;
+    char port_str[8];
+    snprintf(port_str, sizeof(port_str), "%u", (unsigned)port);
+
+    struct addrinfo *res = NULL;
+    int gai = getaddrinfo(host, port_str, &hints, &res);
+    if (gai != 0) {
+        fprintf(stderr, "Invalid bind host address '%s': %s\n", host, gai_strerror(gai));
+        return NULL;
+    }
+
+    int fd = -1;
+    int last_errno = 0;
+    for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
+        fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd < 0) {
+            last_errno = errno;
+            continue;
+        }
+        int opt = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        if (bind(fd, ai->ai_addr, ai->ai_addrlen) == 0 && listen(fd, 32) == 0) {
+            break;
+        }
+        last_errno = errno;
+        close(fd);
+        fd = -1;
+    }
+    freeaddrinfo(res);
     if (fd < 0) {
-        perror("socket");
+        fprintf(stderr, "Failed to bind %s:%u: %s\n", host, (unsigned)port, strerror(last_errno));
         return NULL;
     }
 
-    int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
-        fprintf(stderr, "Invalid bind host address: %s\n", host);
-        close(fd);
-        return NULL;
-    }
-
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("bind");
-        close(fd);
-        return NULL;
-    }
-
-    if (listen(fd, 32) < 0) {
-        perror("listen");
-        close(fd);
-        return NULL;
-    }
-
+    struct sockaddr_storage addr;
     socklen_t alen = sizeof(addr);
     if (getsockname(fd, (struct sockaddr *)&addr, &alen) == 0) {
-        port = ntohs(addr.sin_port);
+        if (addr.ss_family == AF_INET) {
+            port = ntohs(((struct sockaddr_in *)&addr)->sin_port);
+        } else if (addr.ss_family == AF_INET6) {
+            port = ntohs(((struct sockaddr_in6 *)&addr)->sin6_port);
+        }
     }
 
     MarkeeServer *srv = calloc(1, sizeof(*srv));

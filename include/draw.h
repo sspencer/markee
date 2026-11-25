@@ -13,7 +13,8 @@ typedef struct {
     uint8_t b;
 } MarkeeColor;
 
-/* Parse a color string ("#FFF", "#00FF00", "white", "yellow", "red", etc.). */
+/* Parse a color string: hex with optional "#" or "0x" prefix in 3- or 6-digit form
+ * ("#FFF", "#00FF00", "0x00ff00", "00ff00") or a named color ("white", "amber", ...). */
 bool draw_parse_color_string(const char *s, MarkeeColor *out);
 
 /* Render bitmap text directly into an RGB pixel buffer (returns pixel width of rendered text).

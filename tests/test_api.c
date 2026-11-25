@@ -15,6 +15,8 @@
 
 #include "config.h"
 #include "display.h"
+#include "draw.h"
+#include "json.h"
 #include "raylib.h"
 #include "renderer.h"
 #include "server.h"
@@ -598,6 +600,233 @@ static void test_monochrome_filter(void) {
     printf("[PASS] BT.709 monochrome filter (perceptual luminance, PNG readback, non-destructive toggle)\n");
 }
 
+static void test_color_formats(void) {
+    /* Shared parser: '#', '0x', bare hex, 3-digit, names; rejects junk */
+    MarkeeColor c;
+    assert(draw_parse_color_string("#ff5500", &c) && c.r == 0xff && c.g == 0x55 && c.b == 0x00);
+    assert(draw_parse_color_string("ff5500", &c) && c.r == 0xff && c.g == 0x55 && c.b == 0x00);
+    assert(draw_parse_color_string("0x11aabb", &c) && c.r == 0x11 && c.g == 0xaa && c.b == 0xbb);
+    assert(draw_parse_color_string("0X11AABB", &c) && c.r == 0x11 && c.g == 0xaa && c.b == 0xbb);
+    assert(draw_parse_color_string("0xf50", &c) && c.r == 0xff && c.g == 0x55 && c.b == 0x00);
+    assert(draw_parse_color_string("f50", &c) && c.r == 0xff && c.g == 0x55 && c.b == 0x00);
+    assert(draw_parse_color_string("amber", &c) && c.r == 255 && c.g == 191 && c.b == 0);
+    assert(!draw_parse_color_string("0x", &c));
+    assert(!draw_parse_color_string("0x12345", &c));
+    assert(!draw_parse_color_string("#0x112233", &c));
+    assert(!draw_parse_color_string("notacolor", &c));
+
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, false));
+    MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+
+    struct {
+        const char *method;
+        const char *path;
+        const char *body;
+        uint8_t r, g, b;
+    } ok_cases[] = {
+        {"POST", "/fill?color=0x11aabb", NULL, 0x11, 0xaa, 0xbb},
+        {"POST", "/fill?color=%2322ccdd", NULL, 0x22, 0xcc, 0xdd},
+        {"POST", "/fill?color=f50", NULL, 0xff, 0x55, 0x00},
+        {"POST", "/fill?color=amber", NULL, 255, 191, 0},
+        {"POST", "/fill", "{\"color\":\"teal\"}", 0, 128, 128},
+        {"POST", "/fill", "{\"color\":\"0x010203\"}", 1, 2, 3},
+        {"POST", "/pixel?x=3&y=4&color=0xabcdef", NULL, 0xab, 0xcd, 0xef},
+        {"POST", "/pixel?x=3&y=4&color=red", NULL, 255, 0, 0},
+    };
+    for (size_t i = 0; i < sizeof(ok_cases) / sizeof(ok_cases[0]); i++) {
+        const char *body = ok_cases[i].body;
+        HttpResp r = do_request(port, ok_cases[i].method, ok_cases[i].path,
+                                body ? "application/json" : NULL,
+                                (const uint8_t *)body, body ? strlen(body) : 0);
+        assert(r.status == 200);
+        free(r.body);
+        uint8_t pr = 0, pg = 0, pb = 0;
+        assert(display_get_pixel(&disp, 3, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == ok_cases[i].r && pg == ok_cases[i].g && pb == ok_cases[i].b);
+    }
+
+    /* Invalid colors are rejected */
+    HttpResp r = do_request(port, "POST", "/fill?color=0xzzzzzz", NULL, NULL, 0);
+    assert(r.status == 400);
+    free(r.body);
+
+    /* /monochrome and /draw accept 0x too */
+    r = do_request(port, "POST", "/monochrome?color=0x00ff00", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"hex\":\"#00ff00\"") != NULL);
+    free(r.body);
+    r = do_request(port, "DELETE", "/monochrome", NULL, NULL, 0);
+    free(r.body);
+
+    const char *draw = "[{\"op\":\"pixel\",\"x\":3,\"y\":4,\"color\":\"0x0a0b0c\"}]";
+    r = do_request(port, "POST", "/draw", "application/json", (const uint8_t *)draw, strlen(draw));
+    assert(r.status == 200);
+    free(r.body);
+    uint8_t pr = 0, pg = 0, pb = 0;
+    assert(display_get_pixel(&disp, 3, 4, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0x0a && pg == 0x0b && pb == 0x0c);
+
+    server_stop(srv);
+    display_destroy(&disp);
+    printf("[PASS] unified color parsing (#hex, 0xhex, bare hex, 3-digit, names) across endpoints\n");
+}
+
+
+/* Send a raw request on a fresh connection and read until the server closes. */
+static char *raw_exchange(uint16_t port, const char *req, size_t req_len) {
+    int fd = connect_local(port);
+    send_all(fd, req, req_len);
+    size_t cap = 4096, got = 0;
+    char *buf = malloc(cap);
+    assert(buf != NULL);
+    for (;;) {
+        if (got + 1 >= cap) {
+            cap *= 2;
+            buf = realloc(buf, cap);
+            assert(buf != NULL);
+        }
+        ssize_t n = recv(fd, buf + got, cap - got - 1, 0);
+        if (n <= 0) break;
+        got += (size_t)n;
+    }
+    buf[got] = '\0';
+    close(fd);
+    return buf;
+}
+
+static void test_audit_fixes(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, false));
+    MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+    uint8_t pr, pg, pb;
+
+    /* Draw error messages that echo user input are valid, escaped JSON */
+    {
+        const char *body = "[{\"op\":\"bad\\\"op\"}]";
+        HttpResp r = do_request(port, "POST", "/draw", "application/json",
+                                (const uint8_t *)body, strlen(body));
+        assert(r.status == 400);
+        char perr[128];
+        JsonValue *j = json_parse((const char *)r.body, r.body_len, perr, sizeof(perr));
+        assert(j != NULL && j->type == JSON_OBJECT);
+        const char *msg = json_as_string(json_obj_get(j, "error"));
+        assert(msg && strstr(msg, "bad\"op"));
+        json_free(j);
+        free(r.body);
+    }
+
+    /* Wrong method on a known path -> 405 with Allow; unknown path still 404 */
+    {
+        const char *req = "GET /fill HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+        char *resp = raw_exchange(port, req, strlen(req));
+        assert(strncmp(resp, "HTTP/1.1 405", 12) == 0);
+        assert(strstr(resp, "\r\nAllow: POST, OPTIONS\r\n"));
+        free(resp);
+        HttpResp r = do_request(port, "GET", "/nope", NULL, NULL, 0);
+        assert(r.status == 404);
+        free(r.body);
+    }
+
+    /* Query values are URL-decoded (%XX and '+') */
+    {
+        HttpResp r = do_request(port, "POST", "/fill?color=%30x%31%32%33%34%35%36", NULL, NULL, 0);
+        assert(r.status == 200);
+        free(r.body);
+        assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0x12 && pg == 0x34 && pb == 0x56);
+    }
+
+    /* Real JSON parsing: key names inside string values don't confuse lookup */
+    {
+        const char *body = "{\"note\":\"\\\"color\\\":\\\"red\\\"\",\"r\":1,\"g\":2,\"b\":3}";
+        HttpResp r = do_request(port, "POST", "/fill", "application/json",
+                                (const uint8_t *)body, strlen(body));
+        assert(r.status == 200);
+        free(r.body);
+        assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 1 && pg == 2 && pb == 3);
+    }
+
+    /* Brightness body must be a whole number or JSON; trailing junk is rejected */
+    {
+        HttpResp r = do_request(port, "POST", "/brightness", "text/plain",
+                                (const uint8_t *)"75abc", 5);
+        assert(r.status == 400);
+        free(r.body);
+        r = do_request(port, "POST", "/brightness", "text/plain", (const uint8_t *)" 60\n", 4);
+        assert(r.status == 200);
+        free(r.body);
+        r = do_request(port, "POST", "/brightness", "application/json",
+                       (const uint8_t *)"{\"brightness\":70}", strlen("{\"brightness\":70}"));
+        assert(r.status == 200);
+        free(r.body);
+    }
+
+    /* Over-long request target -> 414 instead of silent truncation */
+    {
+        char req[900];
+        int n = snprintf(req, sizeof(req), "GET /info?x=");
+        memset(req + n, 'a', 600);
+        n += 600;
+        n += snprintf(req + n, sizeof(req) - (size_t)n, " HTTP/1.1\r\nHost: x\r\n\r\n");
+        char *resp = raw_exchange(port, req, (size_t)n);
+        assert(strncmp(resp, "HTTP/1.1 414", 12) == 0);
+        free(resp);
+
+        char big[1400];
+        memcpy(big, "GET /", 5);
+        memset(big + 5, 'a', 1200);
+        n = 1205 + snprintf(big + 1205, sizeof(big) - 1205, " HTTP/1.1\r\nHost: x\r\n\r\n");
+        resp = raw_exchange(port, big, (size_t)n);
+        assert(strncmp(resp, "HTTP/1.1 414", 12) == 0);
+        free(resp);
+    }
+
+    /* Shapes with no color keys default to a white outline; pixel defaults to white */
+    {
+        HttpResp r = do_request(port, "POST", "/clear", NULL, NULL, 0);
+        free(r.body);
+        const char *body = "[{\"op\":\"rect\",\"x\":0,\"y\":0,\"w\":4,\"h\":4},"
+                           "{\"op\":\"pixel\",\"x\":10,\"y\":10},"
+                           "{\"op\":\"pixel\",\"x\":11,\"y\":10,\"color\":\"none\"}]";
+        r = do_request(port, "POST", "/draw", "application/json",
+                       (const uint8_t *)body, strlen(body));
+        assert(r.status == 200);
+        free(r.body);
+        assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 255 && pb == 255);
+        assert(display_get_pixel(&disp, 1, 1, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 0 && pb == 0);
+        assert(display_get_pixel(&disp, 10, 10, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 255 && pb == 255);
+        assert(display_get_pixel(&disp, 11, 10, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 0 && pb == 0);
+    }
+
+    server_stop(srv);
+
+    /* Binding by hostname and IPv6 literal */
+    const char *hosts[] = {"localhost", "::1"};
+    for (size_t i = 0; i < 2; i++) {
+        MarkeeServer *s2 = server_start(&disp, hosts[i], 0);
+        if (!s2 && i == 1) {
+            printf("  (IPv6 loopback unavailable; skipped ::1 bind)\n");
+            continue;
+        }
+        assert(s2 != NULL);
+        assert(server_get_port(s2) != 0);
+        server_stop(s2);
+    }
+
+    display_destroy(&disp);
+    printf("[PASS] audit fixes (escaping, 405, URL decode, JSON, strict brightness, 414, defaults, bind)\n");
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     SetTraceLogLevel(LOG_ERROR);
@@ -608,6 +837,8 @@ int main(void) {
     test_custom_resolution_api();
     test_draw_api();
     test_monochrome_filter();
+    test_color_formats();
+    test_audit_fixes();
 
     printf("\nAll markee tests passed!\n");
     return 0;

@@ -62,7 +62,13 @@ static int hex_nibble(char c) {
 bool draw_parse_color_string(const char *s, MarkeeColor *out) {
     if (!s || !*s || !out) return false;
 
-    const char *hex = (*s == '#') ? s + 1 : s;
+    /* Accept "#rrggbb", "0xrrggbb", or bare "rrggbb" (and 3-digit forms). */
+    const char *hex = s;
+    if (*s == '#') {
+        hex = s + 1;
+    } else if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        hex = s + 2;
+    }
     size_t hlen = strlen(hex);
     if (hlen == 3) {
         int r = hex_nibble(hex[0]);
@@ -616,6 +622,21 @@ static bool extract_stroke_and_fill(const JsonValue *obj,
     return true;
 }
 
+/* True if the op names any color at all (color, fill, or r/g/b), even an explicit "none". */
+static bool op_specifies_color(const JsonValue *obj) {
+    return json_obj_get(obj, "color") || json_obj_get(obj, "fill") ||
+           json_obj_get(obj, "r") || json_obj_get(obj, "g") || json_obj_get(obj, "b");
+}
+
+/* For outline shapes: when no color keys are given at all, default to a white outline
+ * (matching line/text), instead of silently drawing nothing. */
+static void default_white_stroke(const JsonValue *obj, bool *has_stroke, MarkeeColor *stroke_c) {
+    if (!op_specifies_color(obj)) {
+        *has_stroke = true;
+        *stroke_c = (MarkeeColor){255, 255, 255};
+    }
+}
+
 static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
                                MarkeeScrollState *scroll_state,
                                const JsonValue *obj,
@@ -656,8 +677,13 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
         bool hs = false, hf = false;
         MarkeeColor sc, fc;
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
-        MarkeeColor c = hs ? sc : (hf ? fc : (MarkeeColor){0, 0, 0});
-        put_px_buf(buf, bw, bh, x, y, c);
+        if (hs) {
+            put_px_buf(buf, bw, bh, x, y, sc);
+        } else if (hf) {
+            put_px_buf(buf, bw, bh, x, y, fc);
+        } else if (!op_specifies_color(obj)) {
+            put_px_buf(buf, bw, bh, x, y, (MarkeeColor){255, 255, 255});
+        } /* else: explicit "none"/null color -> nothing to draw */
         return true;
     }
 
@@ -683,6 +709,7 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
         bool hs = false, hf = false;
         MarkeeColor sc, fc;
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
+        default_white_stroke(obj, &hs, &sc);
         draw_rect_buf(buf, bw, bh, x, y, w, h, radius, hf, fc, hs, sc);
         return true;
     }
@@ -695,6 +722,7 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
         bool hs = false, hf = false;
         MarkeeColor sc, fc;
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
+        default_white_stroke(obj, &hs, &sc);
         draw_oval_buf(buf, bw, bh, x, y, w, h, hf, fc, hs, sc);
         return true;
     }
@@ -733,6 +761,7 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
             free(pts);
             return false;
         }
+        default_white_stroke(obj, &hs, &sc);
         draw_polygon_buf(buf, bw, bh, pts, n, hf, fc, hs, sc);
         free(pts);
         return true;
