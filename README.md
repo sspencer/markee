@@ -102,6 +102,8 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 | `--dpi <value>` | Override monitor logical DPI (`> 0`) if EDID physical sizing is wrong | Auto-detected (fallback `110`) |
 | `--always-on-top` | Keep the GUI window floating above other windows. Alias: `--topmost` | Off |
 | `--borderless` | Floating widget mode: hide OS titlebar, transparent backdrop, drag enclosure to move. Alias: `--frameless` | Off |
+| `--position <X,Y>` | Initial window position in screen pixels (e.g. `100,60`). Alias: `--pos` | Centered |
+| `--corner <place>` | Snap initial window to a monitor corner or edge: `center`, `top-left` (`tl`), `top-right` (`tr`), `bottom-left` (`bl`), `bottom-right` (`br`), `top`, `bottom` | `center` |
 | `--demo` | Start with the built-in 60 Hz demo animation instead of a blank display | Off |
 | `--mute` | Disable alert sound playback. Alias: `--no-audio` | Off |
 | `--headless` | Run the API server without a GUI window (60 Hz demo, scrolling text, `GET /frame`, and alert audio still run) | Off |

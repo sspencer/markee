@@ -193,7 +193,35 @@ static void test_layout_sizing(void) {
     MarkeeLayout L3 = renderer_compute_layout(72, 16, 1.0f, MARKEE_PIXEL_SQUARE, 144.0f, 1920, 500);
     assert(fabsf(L3.dpi - 144.0f) < 0.01f);
     assert(fabsf(L3.matrix_w - 6.35f * 144.0f) < 0.01f);
-    printf("[PASS] layout physical sizing, zoom, pixel shape, and custom resolution\n");
+
+    /* Corner parsing and window placement */
+    MarkeeWindowCorner c;
+    assert(renderer_parse_corner("center", &c) && c == MARKEE_CORNER_CENTER);
+    assert(renderer_parse_corner("top-right", &c) && c == MARKEE_CORNER_TOP_RIGHT);
+    assert(renderer_parse_corner("TR", &c) && c == MARKEE_CORNER_TOP_RIGHT);
+    assert(renderer_parse_corner("bottom-left", &c) && c == MARKEE_CORNER_BOTTOM_LEFT);
+    assert(renderer_parse_corner("br", &c) && c == MARKEE_CORNER_BOTTOM_RIGHT);
+    assert(renderer_parse_corner("top", &c) && c == MARKEE_CORNER_TOP);
+    assert(renderer_parse_corner("bottom", &c) && c == MARKEE_CORNER_BOTTOM);
+    assert(!renderer_parse_corner("middle", &c));
+
+    int wx = -1, wy = -1;
+    MarkeeWindowOpts opts = {0};
+    opts.corner = MARKEE_CORNER_TOP_RIGHT;
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == 1920 - 600 - 24 && wy == 48);
+
+    opts.corner = MARKEE_CORNER_BOTTOM_LEFT;
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == 24 && wy == 1080 - 160 - 64);
+
+    opts.has_position = true;
+    opts.pos_x = 120;
+    opts.pos_y = 340;
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == 120 && wy == 340);
+
+    printf("[PASS] layout physical sizing, zoom, pixel shape, custom resolution, and window placement\n");
 }
 
 static void test_display_and_png_roundtrip(void) {

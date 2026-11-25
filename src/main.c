@@ -73,6 +73,22 @@ static bool parse_dpi(const char *s, float *out_dpi) {
     return true;
 }
 
+static bool parse_position(const char *s, int *out_x, int *out_y) {
+    if (!s || !*s || !out_x || !out_y) return false;
+    char *sep = NULL;
+    long x = strtol(s, &sep, 10);
+    if (sep == s || *sep != ',') return false;
+    const char *y_start = sep + 1;
+    if (*y_start == '\0') return false;
+    char *end = NULL;
+    long y = strtol(y_start, &end, 10);
+    if (end == y_start || *end != '\0') return false;
+    if (x < -16384 || x > 16384 || y < -16384 || y > 16384) return false;
+    *out_x = (int)x;
+    *out_y = (int)y;
+    return true;
+}
+
 static bool parse_pixel_shape(const char *s, MarkeePixelShape *out_shape) {
     if (!s || !out_shape) return false;
     if (strcmp(s, "square") == 0) {
@@ -106,6 +122,10 @@ static void print_usage(const char *prog) {
            "      --always-on-top     Keep the GUI window above other windows (alias: --topmost)\n"
            "      --borderless        Floating widget mode: hide titlebar, transparent background,\n"
            "                          click-and-drag enclosure to move (alias: --frameless)\n"
+           "      --position <X,Y>    Initial window position in screen coordinates (alias: --pos)\n"
+           "      --corner <place>    Snap initial window to monitor corner/edge: center,\n"
+           "                          top-left (tl), top-right (tr), bottom-left (bl),\n"
+           "                          bottom-right (br), top, bottom\n"
            "      --demo              Start with the built-in demo animation (default: blank)\n"
            "      --mute              Disable alert sound playback (alias: --no-audio)\n"
            "      --headless          Run API server only without opening a GUI window\n"
@@ -168,6 +188,9 @@ int main(int argc, char **argv) {
     float override_dpi = 0.0f;
     bool always_on_top = false;
     bool borderless = false;
+    bool has_position = false;
+    int pos_x = 0, pos_y = 0;
+    MarkeeWindowCorner corner = MARKEE_CORNER_CENTER;
     bool start_demo = false;
     bool mute = false;
     bool headless = false;
@@ -225,6 +248,19 @@ int main(int argc, char **argv) {
             always_on_top = true;
         } else if (strcmp(argv[i], "--borderless") == 0 || strcmp(argv[i], "--frameless") == 0) {
             borderless = true;
+        } else if ((strcmp(argv[i], "--position") == 0 || strcmp(argv[i], "--pos") == 0) && i + 1 < argc) {
+            if (!parse_position(argv[++i], &pos_x, &pos_y)) {
+                fprintf(stderr, "Invalid position '%s' (expected X,Y integers)\n", argv[i]);
+                return 1;
+            }
+            has_position = true;
+        } else if (strcmp(argv[i], "--corner") == 0 && i + 1 < argc) {
+            if (!renderer_parse_corner(argv[++i], &corner)) {
+                fprintf(stderr, "Invalid corner '%s' (expected center, top-left, top-right, bottom-left, bottom-right, top, or bottom)\n",
+                        argv[i]);
+                return 1;
+            }
+            has_position = false;
         } else if (strcmp(argv[i], "--demo") == 0) {
             start_demo = true;
         } else if (strcmp(argv[i], "--blank") == 0) {
@@ -324,7 +360,11 @@ int main(int argc, char **argv) {
 
         MarkeeWindowOpts win_opts = {
             .always_on_top = always_on_top,
-            .borderless = borderless
+            .borderless = borderless,
+            .has_position = has_position,
+            .pos_x = pos_x,
+            .pos_y = pos_y,
+            .corner = corner
         };
         MarkeeLayout layout = renderer_init_window_ex(width, height, zoom, pixel_shape,
                                                       host, actual_port, override_dpi,

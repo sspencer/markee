@@ -2,8 +2,76 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <strings.h>
 
 #include "raylib.h"
+
+bool renderer_parse_corner(const char *s, MarkeeWindowCorner *out_corner) {
+    if (!s || !*s || !out_corner) return false;
+    if (strcasecmp(s, "center") == 0) {
+        *out_corner = MARKEE_CORNER_CENTER;
+        return true;
+    }
+    if (strcasecmp(s, "top-left") == 0 || strcasecmp(s, "topleft") == 0 || strcasecmp(s, "tl") == 0) {
+        *out_corner = MARKEE_CORNER_TOP_LEFT;
+        return true;
+    }
+    if (strcasecmp(s, "top-right") == 0 || strcasecmp(s, "topright") == 0 || strcasecmp(s, "tr") == 0) {
+        *out_corner = MARKEE_CORNER_TOP_RIGHT;
+        return true;
+    }
+    if (strcasecmp(s, "bottom-left") == 0 || strcasecmp(s, "bottomleft") == 0 || strcasecmp(s, "bl") == 0) {
+        *out_corner = MARKEE_CORNER_BOTTOM_LEFT;
+        return true;
+    }
+    if (strcasecmp(s, "bottom-right") == 0 || strcasecmp(s, "bottomright") == 0 || strcasecmp(s, "br") == 0) {
+        *out_corner = MARKEE_CORNER_BOTTOM_RIGHT;
+        return true;
+    }
+    if (strcasecmp(s, "top") == 0 || strcasecmp(s, "top-center") == 0) {
+        *out_corner = MARKEE_CORNER_TOP;
+        return true;
+    }
+    if (strcasecmp(s, "bottom") == 0 || strcasecmp(s, "bottom-center") == 0) {
+        *out_corner = MARKEE_CORNER_BOTTOM;
+        return true;
+    }
+    return false;
+}
+
+void renderer_compute_window_position(int mon_w, int mon_h, int win_w, int win_h,
+                                      const MarkeeWindowOpts *opts,
+                                      int *out_x, int *out_y) {
+    int x = 0, y = 0;
+    if (opts && opts->has_position) {
+        x = opts->pos_x;
+        y = opts->pos_y;
+    } else if (mon_w > 0 && mon_h > 0) {
+        const int pad_x = 24;
+        const int pad_top = 48;    /* clearance for OS menu bar */
+        const int pad_bottom = 64; /* clearance for dock / taskbar */
+        int cx = mon_w > win_w ? (mon_w - win_w) / 2 : 0;
+        int cy = mon_h > win_h ? (mon_h - win_h) / 2 : 0;
+        int rx = mon_w > win_w + pad_x ? mon_w - win_w - pad_x : 0;
+        int by = mon_h > win_h + pad_bottom ? mon_h - win_h - pad_bottom : 0;
+        int ty = mon_h > win_h + pad_top ? pad_top : 0;
+        int lx = mon_w > win_w + pad_x ? pad_x : 0;
+
+        MarkeeWindowCorner corner = opts ? opts->corner : MARKEE_CORNER_CENTER;
+        switch (corner) {
+            case MARKEE_CORNER_TOP_LEFT:     x = lx; y = ty; break;
+            case MARKEE_CORNER_TOP_RIGHT:    x = rx; y = ty; break;
+            case MARKEE_CORNER_BOTTOM_LEFT:  x = lx; y = by; break;
+            case MARKEE_CORNER_BOTTOM_RIGHT: x = rx; y = by; break;
+            case MARKEE_CORNER_TOP:          x = cx; y = ty; break;
+            case MARKEE_CORNER_BOTTOM:       x = cx; y = by; break;
+            case MARKEE_CORNER_CENTER:
+            default:                         x = cx; y = cy; break;
+        }
+    }
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+}
 
 MarkeeLayout renderer_compute_layout(int width, int height, float zoom,
                                      MarkeePixelShape pixel_shape,
@@ -117,9 +185,10 @@ MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
         SetWindowSize(layout.window_w, layout.window_h);
     }
 
-    if (mon_w > 0 && mon_h > 0) {
-        int px = mon_w > layout.window_w ? (mon_w - layout.window_w) / 2 : 0;
-        int py = mon_h > layout.window_h ? (mon_h - layout.window_h) / 2 : 0;
+    if (opts->has_position || (mon_w > 0 && mon_h > 0)) {
+        int px = 0, py = 0;
+        renderer_compute_window_position(mon_w, mon_h, layout.window_w, layout.window_h,
+                                         opts, &px, &py);
         SetWindowPosition(px, py);
     }
 

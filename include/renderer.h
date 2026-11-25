@@ -46,10 +46,33 @@ typedef struct {
     float cell_pitch;
 } MarkeeLayout;
 
+typedef enum {
+    MARKEE_CORNER_CENTER = 0,
+    MARKEE_CORNER_TOP_LEFT,
+    MARKEE_CORNER_TOP_RIGHT,
+    MARKEE_CORNER_BOTTOM_LEFT,
+    MARKEE_CORNER_BOTTOM_RIGHT,
+    MARKEE_CORNER_TOP,
+    MARKEE_CORNER_BOTTOM
+} MarkeeWindowCorner;
+
 typedef struct {
     bool always_on_top;
     bool borderless;
+    bool has_position;
+    int pos_x;
+    int pos_y;
+    MarkeeWindowCorner corner;
 } MarkeeWindowOpts;
+
+/* Parse a corner placement name ("center", "top-left"/"tl", "top-right"/"tr",
+ * "bottom-left"/"bl", "bottom-right"/"br", "top", "bottom"). */
+bool renderer_parse_corner(const char *s, MarkeeWindowCorner *out_corner);
+
+/* Compute initial window (x, y) on a mon_w x mon_h monitor from opts. */
+void renderer_compute_window_position(int mon_w, int mon_h, int win_w, int win_h,
+                                      const MarkeeWindowOpts *opts,
+                                      int *out_x, int *out_y);
 
 /* Compute layout for resolution (width x height), zoom factor, pixel shape, and logical DPI
  * (or auto-detect DPI when override_dpi <= 0). */
