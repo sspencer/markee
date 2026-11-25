@@ -221,7 +221,18 @@ static void test_layout_sizing(void) {
     renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
     assert(wx == 120 && wy == 340);
 
-    printf("[PASS] layout physical sizing, zoom, pixel shape, custom resolution, and window placement\n");
+    /* Enclosure case themes */
+    MarkeeCaseTheme th;
+    assert(renderer_parse_case_theme("white", &th) && th == MARKEE_CASE_WHITE);
+    assert(renderer_parse_case_theme("charcoal", &th) && th == MARKEE_CASE_CHARCOAL);
+    assert(renderer_parse_case_theme("dark", &th) && th == MARKEE_CASE_CHARCOAL);
+    assert(renderer_parse_case_theme("orange", &th) && th == MARKEE_CASE_ORANGE);
+    assert(renderer_parse_case_theme("retro", &th) && th == MARKEE_CASE_RETRO);
+    assert(renderer_parse_case_theme("beige", &th) && th == MARKEE_CASE_RETRO);
+    assert(!renderer_parse_case_theme("neon", &th));
+    assert(strcmp(renderer_case_theme_name(MARKEE_CASE_ORANGE), "orange") == 0);
+
+    printf("[PASS] layout physical sizing, zoom, pixel shape, custom resolution, placement, and case themes\n");
 }
 
 static void test_display_and_png_roundtrip(void) {

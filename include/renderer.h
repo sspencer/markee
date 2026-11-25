@@ -11,11 +11,20 @@ typedef enum {
     MARKEE_PIXEL_CIRCLE
 } MarkeePixelShape;
 
+typedef enum {
+    MARKEE_CASE_WHITE = 0,
+    MARKEE_CASE_CHARCOAL,
+    MARKEE_CASE_ORANGE,
+    MARKEE_CASE_RETRO,
+    MARKEE_CASE_COUNT
+} MarkeeCaseTheme;
+
 typedef struct {
     int width;
     int height;
     float zoom;
     MarkeePixelShape pixel_shape;
+    MarkeeCaseTheme case_theme;
     bool borderless;
 
     int window_w;
@@ -63,7 +72,12 @@ typedef struct {
     int pos_x;
     int pos_y;
     MarkeeWindowCorner corner;
+    MarkeeCaseTheme case_theme;
 } MarkeeWindowOpts;
+
+/* Parse an enclosure color theme ("white", "charcoal"/"black"/"dark", "orange", "retro"/"beige"). */
+bool renderer_parse_case_theme(const char *s, MarkeeCaseTheme *out_theme);
+const char *renderer_case_theme_name(MarkeeCaseTheme theme);
 
 /* Parse a corner placement name ("center", "top-left"/"tl", "top-right"/"tr",
  * "bottom-left"/"bl", "bottom-right"/"br", "top", "bottom"). */

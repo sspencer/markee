@@ -104,6 +104,7 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 | `--borderless` | Floating widget mode: hide OS titlebar, transparent backdrop, drag enclosure to move. Alias: `--frameless` | Off |
 | `--position <X,Y>` | Initial window position in screen pixels (e.g. `100,60`). Alias: `--pos` | Centered |
 | `--corner <place>` | Snap initial window to a monitor corner or edge: `center`, `top-left` (`tl`), `top-right` (`tr`), `bottom-left` (`bl`), `bottom-right` (`br`), `top`, `bottom` | `center` |
+| `--case <theme>` | Enclosure color theme: `white`, `charcoal` (`black`/`dark`), `orange`, `retro` (`beige`) | `white` |
 | `--demo` | Start with the built-in 60 Hz demo animation instead of a blank display | Off |
 | `--mute` | Disable alert sound playback. Alias: `--no-audio` | Off |
 | `--headless` | Run the API server without a GUI window (60 Hz demo, scrolling text, `GET /frame`, and alert audio still run) | Off |
@@ -129,6 +130,7 @@ Available when running in GUI mode:
 | `1` / `2` / `3` | Preview the 3 built-in alert sounds (`ding`, `chime`, `bell`; keypad `1–3` also work) |
 | `C` | Clear display to black |
 | `D` | Toggle the built-in demo animation |
+| `K` | Cycle enclosure color theme (`white` / `charcoal` / `orange` / `retro`) |
 | `M` | Toggle the monochrome filter (reuses last tint color, or amber `#ffbf00`) |
 | `P` | Toggle pixel shape (`square` / `circle`) |
 | `S` | Save current frame to `snapshot.png` in the working directory (includes monochrome filter if on) |

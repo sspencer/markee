@@ -9,7 +9,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 - [x] **Always-on-top mode (`--always-on-top`, hotkey `T`):** Keep the LED bar visible above editors and terminals (`FLAG_WINDOW_TOPMOST`) so it works as a true glanceable desk status display.
 - [x] **Borderless floating widget (`--borderless`):** Hide the OS titlebar and render only the molded enclosure with a transparent window background (`FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_TRANSPARENT`) plus click-and-drag repositioning.
 - [x] **Window placement & persistence (`--position X,Y`, `--corner top-right|bottom-right|...`):** Park the bar in a predictable corner on launch (position persistence covered with config file support).
-- [ ] **Enclosure color themes (`--case white|charcoal|orange|retro`):** Support alternate shell finishes (e.g., matte black, classic off-white, bright accent) via CLI flag or hotkey.
+- [x] **Enclosure color themes (`--case white|charcoal|orange|retro`):** Support alternate shell finishes (e.g., matte black, classic off-white, bright accent) via CLI flag or hotkey (`K`).
 - [ ] **Interactive bezel / click events:** Optional virtual hardware button(s) on the enclosure (or clicking the display) exposed over HTTP (`GET /events`) so client applets can react to taps (acknowledge alerts, pause a Pomodoro timer, cycle pages).
 - [ ] **Idle dimming / night mode:** Optional auto-dim after N minutes of no API updates, waking smoothly on the next request.
 

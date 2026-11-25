@@ -6,6 +6,37 @@
 
 #include "raylib.h"
 
+bool renderer_parse_case_theme(const char *s, MarkeeCaseTheme *out_theme) {
+    if (!s || !*s || !out_theme) return false;
+    if (strcasecmp(s, "white") == 0 || strcasecmp(s, "default") == 0) {
+        *out_theme = MARKEE_CASE_WHITE;
+        return true;
+    }
+    if (strcasecmp(s, "charcoal") == 0 || strcasecmp(s, "black") == 0 || strcasecmp(s, "dark") == 0) {
+        *out_theme = MARKEE_CASE_CHARCOAL;
+        return true;
+    }
+    if (strcasecmp(s, "orange") == 0) {
+        *out_theme = MARKEE_CASE_ORANGE;
+        return true;
+    }
+    if (strcasecmp(s, "retro") == 0 || strcasecmp(s, "beige") == 0) {
+        *out_theme = MARKEE_CASE_RETRO;
+        return true;
+    }
+    return false;
+}
+
+const char *renderer_case_theme_name(MarkeeCaseTheme theme) {
+    switch (theme) {
+        case MARKEE_CASE_CHARCOAL: return "charcoal";
+        case MARKEE_CASE_ORANGE:   return "orange";
+        case MARKEE_CASE_RETRO:    return "retro";
+        case MARKEE_CASE_WHITE:
+        default:                   return "white";
+    }
+}
+
 bool renderer_parse_corner(const char *s, MarkeeWindowCorner *out_corner) {
     if (!s || !*s || !out_corner) return false;
     if (strcasecmp(s, "center") == 0) {
@@ -181,6 +212,7 @@ MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
 
     MarkeeLayout layout = renderer_compute_layout(width, height, zoom, pixel_shape, override_dpi, mon_w, phys_w_mm);
     layout.borderless = opts->borderless;
+    layout.case_theme = opts->case_theme;
     if (layout.window_w != initial.window_w || layout.window_h != initial.window_h) {
         SetWindowSize(layout.window_w, layout.window_h);
     }
@@ -192,10 +224,11 @@ MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
         SetWindowPosition(px, py);
     }
 
-    printf("Display calibrated: %dx%d LEDs, zoom=%.2fx, pixels=%s, monitor=%dx%d (%d mm physical), "
+    printf("Display calibrated: %dx%d LEDs, zoom=%.2fx, pixels=%s, case=%s, monitor=%dx%d (%d mm physical), "
            "logical DPI=%.1f, LED matrix=%.1fx%.1f pts (%.2f\" wide), refresh=%d Hz%s%s\n",
            layout.width, layout.height, layout.zoom,
            layout.pixel_shape == MARKEE_PIXEL_CIRCLE ? "circle" : "square",
+           renderer_case_theme_name(layout.case_theme),
            mon_w, mon_h, phys_w_mm, layout.dpi,
            layout.matrix_w, layout.matrix_h, layout.matrix_w / layout.dpi,
            MARKEE_REFRESH_HZ,
@@ -307,21 +340,54 @@ void renderer_draw(const MarkeeLayout *L,
         DrawRectangleRounded(shadow, shadow_r, 16, (Color){0, 0, 0, alpha});
     }
 
-    /* 3. Molded off-white PC/ABS plastic outer enclosure (BUSY Bar aesthetic) */
+    /* 3. Molded PC/ABS plastic outer enclosure (themed palette) */
+    Color shell_lower, shell_main, shell_hi, shell_contour, shell_bezel;
+    switch (L->case_theme) {
+        case MARKEE_CASE_CHARCOAL:
+            shell_lower   = (Color){36, 38, 44, 255};
+            shell_main    = (Color){56, 59, 66, 255};
+            shell_hi      = (Color){88, 92, 102, 200};
+            shell_contour = (Color){24, 26, 30, 220};
+            shell_bezel   = (Color){42, 45, 51, 255};
+            break;
+        case MARKEE_CASE_ORANGE:
+            shell_lower   = (Color){178, 70, 20, 255};
+            shell_main    = (Color){236, 104, 36, 255};
+            shell_hi      = (Color){252, 152, 92, 200};
+            shell_contour = (Color){132, 50, 14, 220};
+            shell_bezel   = (Color){192, 80, 26, 255};
+            break;
+        case MARKEE_CASE_RETRO:
+            shell_lower   = (Color){158, 148, 128, 255};
+            shell_main    = (Color){216, 206, 184, 255};
+            shell_hi      = (Color){238, 230, 212, 200};
+            shell_contour = (Color){122, 114, 98, 220};
+            shell_bezel   = (Color){172, 162, 140, 255};
+            break;
+        case MARKEE_CASE_WHITE:
+        default:
+            shell_lower   = (Color){168, 164, 156, 255};
+            shell_main    = (Color){230, 227, 220, 255};
+            shell_hi      = (Color){248, 246, 242, 200};
+            shell_contour = (Color){132, 129, 122, 220};
+            shell_bezel   = (Color){180, 176, 168, 255};
+            break;
+    }
+
     Rectangle body = {L->body_x, L->body_y, L->body_w, L->body_h};
     Rectangle body_lower = {L->body_x, L->body_y + 2.0f * z, L->body_w, L->body_h};
-    DrawRectangleRounded(body_lower, body_r, 16, (Color){168, 164, 156, 255});
+    DrawRectangleRounded(body_lower, body_r, 16, shell_lower);
 
     /* Main molded plastic shell */
-    DrawRectangleRounded(body, body_r, 16, (Color){230, 227, 220, 255});
+    DrawRectangleRounded(body, body_r, 16, shell_main);
 
     /* Top specular molded highlight rim */
     Rectangle body_hi = {L->body_x + 1.5f * z, L->body_y + 1.5f * z,
                          L->body_w - 3.0f * z, L->body_h - 3.5f * z};
-    DrawRectangleRoundedLinesEx(body_hi, body_hi_r, 16, fmaxf(1.0f, 1.5f * z), (Color){248, 246, 242, 200});
+    DrawRectangleRoundedLinesEx(body_hi, body_hi_r, 16, fmaxf(1.0f, 1.5f * z), shell_hi);
 
     /* Outer subtle contour line */
-    DrawRectangleRoundedLinesEx(body, body_r, 16, fmaxf(1.0f, 1.2f * z), (Color){132, 129, 122, 220});
+    DrawRectangleRoundedLinesEx(body, body_r, 16, fmaxf(1.0f, 1.2f * z), shell_contour);
 
     /* 4. Inset black polycarbonate front faceplate with recessed bezel */
     float bpad = 2.0f * z;
@@ -329,7 +395,7 @@ void renderer_draw(const MarkeeLayout *L,
         L->face_x - bpad, L->face_y - bpad,
         L->face_w + bpad * 2.0f, L->face_h + bpad * 2.0f
     };
-    DrawRectangleRounded(bezel_outer, bezel_r, 14, (Color){180, 176, 168, 255});
+    DrawRectangleRounded(bezel_outer, bezel_r, 14, shell_bezel);
 
     Rectangle face = {L->face_x, L->face_y, L->face_w, L->face_h};
     DrawRectangleRounded(face, face_r, 14, (Color){18, 19, 23, 255});

@@ -126,6 +126,8 @@ static void print_usage(const char *prog) {
            "      --corner <place>    Snap initial window to monitor corner/edge: center,\n"
            "                          top-left (tl), top-right (tr), bottom-left (bl),\n"
            "                          bottom-right (br), top, bottom\n"
+           "      --case <theme>      Enclosure color theme: white, charcoal, orange, retro\n"
+           "                          (default: white)\n"
            "      --demo              Start with the built-in demo animation (default: blank)\n"
            "      --mute              Disable alert sound playback (alias: --no-audio)\n"
            "      --headless          Run API server only without opening a GUI window\n"
@@ -134,6 +136,7 @@ static void print_usage(const char *prog) {
            "  1 / 2 / 3               Preview alert sounds (ding, chime, bell)\n"
            "  C                       Clear display\n"
            "  D                       Toggle built-in demo animation\n"
+           "  K                       Cycle enclosure case color theme\n"
            "  M                       Toggle monochrome filter on/off (default amber #ffbf00)\n"
            "  P                       Toggle pixel shape (square / circle)\n"
            "  S                       Save current frame to snapshot.png\n"
@@ -191,6 +194,7 @@ int main(int argc, char **argv) {
     bool has_position = false;
     int pos_x = 0, pos_y = 0;
     MarkeeWindowCorner corner = MARKEE_CORNER_CENTER;
+    MarkeeCaseTheme case_theme = MARKEE_CASE_WHITE;
     bool start_demo = false;
     bool mute = false;
     bool headless = false;
@@ -261,6 +265,12 @@ int main(int argc, char **argv) {
                 return 1;
             }
             has_position = false;
+        } else if (strcmp(argv[i], "--case") == 0 && i + 1 < argc) {
+            if (!renderer_parse_case_theme(argv[++i], &case_theme)) {
+                fprintf(stderr, "Invalid case theme '%s' (expected white, charcoal, orange, or retro)\n",
+                        argv[i]);
+                return 1;
+            }
         } else if (strcmp(argv[i], "--demo") == 0) {
             start_demo = true;
         } else if (strcmp(argv[i], "--blank") == 0) {
@@ -364,7 +374,8 @@ int main(int argc, char **argv) {
             .has_position = has_position,
             .pos_x = pos_x,
             .pos_y = pos_y,
-            .corner = corner
+            .corner = corner,
+            .case_theme = case_theme
         };
         MarkeeLayout layout = renderer_init_window_ex(width, height, zoom, pixel_shape,
                                                       host, actual_port, override_dpi,
@@ -387,6 +398,9 @@ int main(int argc, char **argv) {
             }
             if (IsKeyPressed(KEY_D)) {
                 display_set_demo(&display, !display_is_demo_active(&display));
+            }
+            if (IsKeyPressed(KEY_K)) {
+                layout.case_theme = (MarkeeCaseTheme)((layout.case_theme + 1) % MARKEE_CASE_COUNT);
             }
             if (IsKeyPressed(KEY_M)) {
                 bool en = false;
