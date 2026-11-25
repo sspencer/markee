@@ -99,6 +99,7 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 | `-m, --monochrome <color>` | Start with the BT.709 monochrome tint filter on (`#rrggbb`, `0xrrggbb`, `#rgb`, or a [color name](docs/API.md#color-formats) like `amber`). Alias: `--mono` | Off |
 | `-H, --host <addr>` | Bind address: IPv4, IPv6 (`::1`, `::`), or hostname (`localhost`). Note: the API has **no authentication** | `127.0.0.1` |
 | `-p, --port <port>` | TCP port (`0..65535`; `0` picks a free ephemeral port). Overrides `MARKEE_PORT` | `8080` (or `$MARKEE_PORT`) |
+| `--token <secret>` | Require `Authorization: Bearer <secret>` (or `?token=`) on API requests. Overrides `MARKEE_TOKEN` | Off (or `$MARKEE_TOKEN`) |
 | `--dpi <value>` | Override monitor logical DPI (`> 0`) if EDID physical sizing is wrong | Auto-detected (fallback `110`) |
 | `--always-on-top` | Keep the GUI window floating above other windows. Alias: `--topmost` | Off |
 | `--borderless` | Floating widget mode: hide OS titlebar, transparent backdrop, drag enclosure to move. Alias: `--frameless` | Off |

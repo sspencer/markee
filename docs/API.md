@@ -1079,4 +1079,4 @@ Access-Control-Allow-Headers: Content-Type, Accept
 
 ### Security note
 
-The HTTP API has **no authentication** and open CORS. Anyone who can reach the bound port can change the display or play alert sounds. Keep the default loopback bind (`127.0.0.1`) unless you intentionally want LAN access via `--host 0.0.0.0` or `::`.
+By default the HTTP API has no authentication and open CORS. When exposing `markee` on a LAN (`--host 0.0.0.0` or `::`), pass `--token <secret>` (or set `MARKEE_TOKEN=<secret>`). When enabled, all endpoints except `OPTIONS` CORS preflight require `Authorization: Bearer <secret>` or `?token=<secret>` and return `401 Unauthorized` otherwise.

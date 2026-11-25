@@ -31,6 +31,7 @@ struct MarkeeServer {
     int listen_fd;
     uint16_t port;
     char host[64];
+    char auth_token[256];
     atomic_bool running;
     atomic_int active_clients;
     pthread_t accept_thread;
@@ -47,6 +48,7 @@ typedef struct {
     char query[512];
     char content_type[128];
     char accept[128];
+    char authorization[320];
     size_t content_length;
     bool has_content_length;
     bool chunked;
@@ -81,7 +83,7 @@ static bool send_response_ex(int fd, int status, const char *status_text,
                         "Content-Length: %zu\r\n"
                         "Access-Control-Allow-Origin: *\r\n"
                         "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
-                        "Access-Control-Allow-Headers: Content-Type, Accept\r\n"
+                        "Access-Control-Allow-Headers: Content-Type, Accept, Authorization\r\n"
                         "Connection: %s\r\n"
                         "%s"
                         "\r\n",
@@ -444,6 +446,8 @@ static int read_http_request(SockReader *r, HttpRequest *req) {
             snprintf(req->content_type, sizeof(req->content_type), "%s", val);
         } else if (strcasecmp(line, "Accept") == 0) {
             snprintf(req->accept, sizeof(req->accept), "%s", val);
+        } else if (strcasecmp(line, "Authorization") == 0) {
+            snprintf(req->authorization, sizeof(req->authorization), "%s", val);
         } else if (strcasecmp(line, "Connection") == 0) {
             if (contains_ci(val, "close")) req->keep_alive = false;
             else if (contains_ci(val, "keep-alive")) req->keep_alive = true;
@@ -649,12 +653,47 @@ static int format_event_json(const MarkeeEvent *ev, char *out, size_t out_size) 
                     esc);
 }
 
+static bool const_time_eq(const char *a, const char *b) {
+    if (!a || !b) return false;
+    size_t la = strlen(a), lb = strlen(b);
+    size_t n = la > lb ? la : lb;
+    unsigned char diff = (unsigned char)(la != lb);
+    for (size_t i = 0; i < n; i++) {
+        unsigned char ca = i < la ? (unsigned char)a[i] : 0;
+        unsigned char cb = i < lb ? (unsigned char)b[i] : 0;
+        diff |= (unsigned char)(ca ^ cb);
+    }
+    return diff == 0;
+}
+
+static bool request_authorized(const MarkeeServer *srv, const HttpRequest *req) {
+    if (!srv || srv->auth_token[0] == '\0') return true;
+    if (strncasecmp(req->authorization, "Bearer ", 7) == 0) {
+        const char *tok = req->authorization + 7;
+        while (*tok == ' ' || *tok == '\t') tok++;
+        if (const_time_eq(tok, srv->auth_token)) return true;
+    }
+    char qtok[256];
+    if (query_get(req->query, "token", qtok, sizeof(qtok)) &&
+        const_time_eq(qtok, srv->auth_token)) {
+        return true;
+    }
+    return false;
+}
+
 static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
     MarkeeDisplay *disp = srv->disp;
     bool ka = req->keep_alive;
 
     if (strcmp(req->method, "OPTIONS") == 0) {
         send_response(fd, 204, "No Content", "text/plain", "", 0, ka);
+        return;
+    }
+
+    if (!request_authorized(srv, req)) {
+        const char *body = "{\"error\":\"unauthorized; provide Authorization: Bearer <token> or ?token=\"}";
+        send_response_ex(fd, 401, "Unauthorized", "application/json",
+                         body, strlen(body), ka, "WWW-Authenticate: Bearer\r\n");
         return;
     }
 
@@ -2079,6 +2118,15 @@ MarkeeServer *server_start_ex(MarkeeDisplay *disp, MarkeeAudio *audio,
 
 MarkeeServer *server_start(MarkeeDisplay *disp, const char *host, uint16_t port) {
     return server_start_ex(disp, NULL, host, port);
+}
+
+void server_set_token(MarkeeServer *srv, const char *token) {
+    if (!srv) return;
+    if (token && *token) {
+        snprintf(srv->auth_token, sizeof(srv->auth_token), "%s", token);
+    } else {
+        srv->auth_token[0] = '\0';
+    }
 }
 
 uint16_t server_get_port(const MarkeeServer *srv) {

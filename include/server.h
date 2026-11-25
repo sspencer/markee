@@ -17,6 +17,9 @@ MarkeeServer *server_start(MarkeeDisplay *disp, const char *host, uint16_t port)
 MarkeeServer *server_start_ex(MarkeeDisplay *disp, MarkeeAudio *audio,
                               const char *host, uint16_t port);
 
+/* Configure an optional Bearer API token (NULL or "" disables authentication). */
+void server_set_token(MarkeeServer *srv, const char *token);
+
 /* Return the actual bound TCP port (useful when port=0 was passed). */
 uint16_t server_get_port(const MarkeeServer *srv);
 

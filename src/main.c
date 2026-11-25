@@ -119,6 +119,7 @@ static void print_usage(const char *prog) {
            "                          #ffbf00, amber, red, green)\n"
            "  -H, --host <addr>       Bind address: IPv4, IPv6, or hostname (default: %s)\n"
            "  -p, --port <port>       TCP port to listen on (default: %d, or MARKEE_PORT)\n"
+           "      --token <secret>    Require Bearer token auth (or MARKEE_TOKEN env var)\n"
            "      --dpi <value>       Override monitor logical DPI for physical sizing\n"
            "      --always-on-top     Keep the GUI window above other windows (alias: --topmost)\n"
            "      --borderless        Floating widget mode: hide titlebar, transparent background,\n"
@@ -206,6 +207,7 @@ int main(int argc, char **argv) {
     MarkeeColor mono_color = {255, 191, 0}; /* Default amber if toggled with 'M' */
     const char *host = MARKEE_DEFAULT_HOST;
     uint16_t port = MARKEE_DEFAULT_PORT;
+    const char *auth_token = getenv("MARKEE_TOKEN");
     float override_dpi = 0.0f;
     bool always_on_top = false;
     bool borderless = false;
@@ -263,6 +265,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Invalid port '%s' (expected an integer 0..65535)\n", argv[i]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--token") == 0 && i + 1 < argc) {
+            auth_token = argv[++i];
         } else if (strcmp(argv[i], "--dpi") == 0 && i + 1 < argc) {
             if (!parse_dpi(argv[++i], &override_dpi)) {
                 fprintf(stderr, "Invalid DPI value '%s' (expected a positive number)\n", argv[i]);
@@ -359,6 +363,9 @@ int main(int argc, char **argv) {
         audio_destroy(audio);
         display_destroy(&display);
         return 1;
+    }
+    if (auth_token && *auth_token) {
+        server_set_token(srv, auth_token);
     }
 
     uint16_t actual_port = server_get_port(srv);

@@ -2353,9 +2353,38 @@ static void test_widgets_api(void) {
         assert(!cli_parse_duration_sec("abc", &sec));
     }
 
+    /* 9. Optional Bearer token auth (401 without token, 200 with Bearer header or ?token=) */
+    {
+        server_set_token(srv, "s3cr3t");
+
+        r = do_request(port, "GET", "/info", NULL, NULL, 0);
+        assert(r.status == 401);
+        free(r.body);
+
+        r = do_request(port, "GET", "/info?token=wrong", NULL, NULL, 0);
+        assert(r.status == 401);
+        free(r.body);
+
+        r = do_request(port, "GET", "/info?token=s3cr3t", NULL, NULL, 0);
+        assert(r.status == 200);
+        free(r.body);
+
+        const char *auth_req = "GET /info HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer s3cr3t\r\nConnection: close\r\n\r\n";
+        char *raw = raw_exchange(port, auth_req, strlen(auth_req));
+        assert(strncmp(raw, "HTTP/1.1 200", 12) == 0);
+        free(raw);
+
+        /* CORS OPTIONS preflight remains 204 */
+        r = do_request(port, "OPTIONS", "/info", NULL, NULL, 0);
+        assert(r.status == 204);
+        free(r.body);
+
+        server_set_token(srv, NULL);
+    }
+
     server_stop(srv);
     display_destroy(&disp);
-    printf("[PASS] built-in widgets, transitions, icons, gradients, alpha & CLI helpers\n");
+    printf("[PASS] built-in widgets, transitions, icons, gradients, alpha, CLI & token auth\n");
 }
 
 int main(void) {
