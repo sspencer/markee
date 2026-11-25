@@ -46,7 +46,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 - [x] **AI Agent / MCP Server integration:** Zero-dependency stdio JSON-RPC 2.0 MCP server in [`examples/mcp_server.py`](../examples/mcp_server.py) exposing `markee_info`, `markee_say`, `markee_notify`, `markee_progress`, `markee_draw`, `markee_timer`, `markee_clock`, `markee_alert`, and `markee_clear`.
 - [x] **Focus / Pomodoro timer applet:** [`examples/pomodoro.py`](../examples/pomodoro.py) drives work/break cycles with server-side `countdown` + progress bar, final-stretch color shift, end-of-phase chimes/melodies, and bezel/`Space` skip via `GET /events`.
 - [x] **Now Playing ticker:** [`examples/now_playing.py`](../examples/now_playing.py) polls macOS Spotify/Apple Music (`osascript`) or Linux MPRIS (`playerctl`) and renders a music/pause icon + clipped scrolling track/artist marquee (`--demo` supported).
-- [ ] **System monitor applet:** Live CPU, memory, and network sparklines/meters.
+- [x] **System monitor applet:** [`examples/sysmon.py`](../examples/sysmon.py) samples real CPU load, memory usage, and network throughput (macOS + Linux) and renders a live `sparkline` + `progress` meter dashboard.
 - [ ] **CI / Git status watcher:** Watch GitHub Actions / local test runs and flash pass/fail banners with alerts.
 - [ ] **Rotating carousel daemon:** Cycle through pluggable cards (clock, weather icon + temp, calendar next meeting, stocks/metrics) on a timer.
 
