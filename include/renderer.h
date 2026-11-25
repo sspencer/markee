@@ -16,6 +16,7 @@ typedef struct {
     int height;
     float zoom;
     MarkeePixelShape pixel_shape;
+    bool borderless;
 
     int window_w;
     int window_h;
@@ -47,6 +48,7 @@ typedef struct {
 
 typedef struct {
     bool always_on_top;
+    bool borderless;
 } MarkeeWindowOpts;
 
 /* Compute layout for resolution (width x height), zoom factor, pixel shape, and logical DPI
@@ -71,6 +73,10 @@ MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
 
 /* Toggle the OS always-on-top window flag at runtime. */
 void renderer_set_always_on_top(bool enabled);
+
+/* Handle click-and-drag window repositioning when running in --borderless mode.
+ * Returns true while a drag gesture is actively moving the window. */
+bool renderer_handle_drag(const MarkeeLayout *layout);
 
 /* Draw one frame of the plastic-encased LED display. */
 void renderer_draw(const MarkeeLayout *layout,

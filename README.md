@@ -101,6 +101,7 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 | `-p, --port <port>` | TCP port (`0..65535`; `0` picks a free ephemeral port). Overrides `MARKEE_PORT` | `8080` (or `$MARKEE_PORT`) |
 | `--dpi <value>` | Override monitor logical DPI (`> 0`) if EDID physical sizing is wrong | Auto-detected (fallback `110`) |
 | `--always-on-top` | Keep the GUI window floating above other windows. Alias: `--topmost` | Off |
+| `--borderless` | Floating widget mode: hide OS titlebar, transparent backdrop, drag enclosure to move. Alias: `--frameless` | Off |
 | `--demo` | Start with the built-in 60 Hz demo animation instead of a blank display | Off |
 | `--mute` | Disable alert sound playback. Alias: `--no-audio` | Off |
 | `--headless` | Run the API server without a GUI window (60 Hz demo, scrolling text, `GET /frame`, and alert audio still run) | Off |

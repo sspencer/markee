@@ -104,6 +104,8 @@ static void print_usage(const char *prog) {
            "  -p, --port <port>       TCP port to listen on (default: %d, or MARKEE_PORT)\n"
            "      --dpi <value>       Override monitor logical DPI for physical sizing\n"
            "      --always-on-top     Keep the GUI window above other windows (alias: --topmost)\n"
+           "      --borderless        Floating widget mode: hide titlebar, transparent background,\n"
+           "                          click-and-drag enclosure to move (alias: --frameless)\n"
            "      --demo              Start with the built-in demo animation (default: blank)\n"
            "      --mute              Disable alert sound playback (alias: --no-audio)\n"
            "      --headless          Run API server only without opening a GUI window\n"
@@ -165,6 +167,7 @@ int main(int argc, char **argv) {
     uint16_t port = MARKEE_DEFAULT_PORT;
     float override_dpi = 0.0f;
     bool always_on_top = false;
+    bool borderless = false;
     bool start_demo = false;
     bool mute = false;
     bool headless = false;
@@ -220,6 +223,8 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--always-on-top") == 0 || strcmp(argv[i], "--topmost") == 0) {
             always_on_top = true;
+        } else if (strcmp(argv[i], "--borderless") == 0 || strcmp(argv[i], "--frameless") == 0) {
+            borderless = true;
         } else if (strcmp(argv[i], "--demo") == 0) {
             start_demo = true;
         } else if (strcmp(argv[i], "--blank") == 0) {
@@ -318,7 +323,8 @@ int main(int argc, char **argv) {
         }
 
         MarkeeWindowOpts win_opts = {
-            .always_on_top = always_on_top
+            .always_on_top = always_on_top,
+            .borderless = borderless
         };
         MarkeeLayout layout = renderer_init_window_ex(width, height, zoom, pixel_shape,
                                                       host, actual_port, override_dpi,
@@ -326,6 +332,7 @@ int main(int argc, char **argv) {
 
         while (!WindowShouldClose() && !atomic_load(&g_quit)) {
             if (IsKeyPressed(KEY_Q)) break;
+            renderer_handle_drag(&layout);
             if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1)) {
                 audio_trigger(audio, 1, 100);
             }

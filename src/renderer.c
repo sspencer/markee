@@ -91,6 +91,9 @@ MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
     if (opts->always_on_top) {
         flags |= FLAG_WINDOW_TOPMOST;
     }
+    if (opts->borderless) {
+        flags |= FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_TRANSPARENT;
+    }
     SetConfigFlags(flags);
 
     /* Initial window using fallback DPI so GLFW initializes monitor metrics cleanly */
@@ -109,6 +112,7 @@ MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
     int phys_w_mm = GetMonitorPhysicalWidth(monitor);
 
     MarkeeLayout layout = renderer_compute_layout(width, height, zoom, pixel_shape, override_dpi, mon_w, phys_w_mm);
+    layout.borderless = opts->borderless;
     if (layout.window_w != initial.window_w || layout.window_h != initial.window_h) {
         SetWindowSize(layout.window_w, layout.window_h);
     }
@@ -120,13 +124,14 @@ MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
     }
 
     printf("Display calibrated: %dx%d LEDs, zoom=%.2fx, pixels=%s, monitor=%dx%d (%d mm physical), "
-           "logical DPI=%.1f, LED matrix=%.1fx%.1f pts (%.2f\" wide), refresh=%d Hz%s\n",
+           "logical DPI=%.1f, LED matrix=%.1fx%.1f pts (%.2f\" wide), refresh=%d Hz%s%s\n",
            layout.width, layout.height, layout.zoom,
            layout.pixel_shape == MARKEE_PIXEL_CIRCLE ? "circle" : "square",
            mon_w, mon_h, phys_w_mm, layout.dpi,
            layout.matrix_w, layout.matrix_h, layout.matrix_w / layout.dpi,
            MARKEE_REFRESH_HZ,
-           opts->always_on_top ? ", always-on-top" : "");
+           opts->always_on_top ? ", always-on-top" : "",
+           opts->borderless ? ", borderless" : "");
     fflush(stdout);
 
     return layout;
@@ -146,6 +151,41 @@ void renderer_set_always_on_top(bool enabled) {
     } else {
         ClearWindowState(FLAG_WINDOW_TOPMOST);
     }
+}
+
+bool renderer_handle_drag(const MarkeeLayout *L) {
+    static bool dragging = false;
+    static Vector2 grab_offset = {0.0f, 0.0f};
+
+    if (!L || !L->borderless) {
+        dragging = false;
+        return false;
+    }
+
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        Vector2 mp = GetMousePosition();
+        Rectangle body = {L->body_x, L->body_y, L->body_w, L->body_h};
+        if (CheckCollisionPointRec(mp, body)) {
+            dragging = true;
+            grab_offset = mp;
+        }
+    }
+
+    if (dragging) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            Vector2 wp = GetWindowPosition();
+            Vector2 mp = GetMousePosition();
+            int nx = (int)roundf(wp.x + mp.x - grab_offset.x);
+            int ny = (int)roundf(wp.y + mp.y - grab_offset.y);
+            if (nx != (int)roundf(wp.x) || ny != (int)roundf(wp.y)) {
+                SetWindowPosition(nx, ny);
+            }
+        } else {
+            dragging = false;
+        }
+    }
+
+    return dragging;
 }
 
 static uint8_t clamp_u8(int v) {
@@ -178,8 +218,12 @@ void renderer_draw(const MarkeeLayout *L,
     float bezel_r  = scale_roundness(0.18f, ref_face_h + 4.0f, L->face_w + 4.0f, L->face_h + 4.0f);
     float face_r   = scale_roundness(0.16f, ref_face_h, L->face_w, L->face_h);
 
-    /* 1. Dark matte desk backdrop */
-    ClearBackground((Color){26, 28, 33, 255});
+    /* 1. Backdrop: transparent in --borderless floating widget mode, dark matte desk otherwise */
+    if (L->borderless) {
+        ClearBackground(BLANK);
+    } else {
+        ClearBackground((Color){26, 28, 33, 255});
+    }
 
     /* 2. Soft layered drop shadow beneath the plastic casing */
     for (int s = 4; s >= 1; s--) {
