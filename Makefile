@@ -66,8 +66,10 @@ CFLAGS      := -std=c11 $(WARN_FLAGS) $(OPT_FLAGS) -I$(INC_DIR) $(RAYLIB_CFLAGS)
 DEPFLAGS    := -MMD -MP
 LDFLAGS     ?=
 LDLIBS      := $(RAYLIB_LIBS) -lpthread -lm
+SAN_FLAGS   := -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+SAN_TARGET  := test_api_san
 
-.PHONY: all debug release run test clean distclean install uninstall help
+.PHONY: all debug release run test sanitize sanitize-build clean distclean install uninstall help
 
 all: $(TARGET)
 
@@ -98,6 +100,14 @@ run: $(TARGET)
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
+$(SAN_TARGET): $(CORE_SRCS) $(TEST_DIR)/test_api.c
+	$(CC) -std=c11 $(WARN_FLAGS) $(SAN_FLAGS) -I$(INC_DIR) $(RAYLIB_CFLAGS) -o $@ $(CORE_SRCS) $(TEST_DIR)/test_api.c $(LDLIBS)
+
+sanitize-build: $(SAN_TARGET)
+
+sanitize: $(SAN_TARGET)
+	./$(SAN_TARGET)
+
 install: $(TARGET)
 	install -d "$(DESTDIR)$(BINDIR)"
 	install -m 0755 $(TARGET) "$(DESTDIR)$(BINDIR)/$(TARGET)"
@@ -112,10 +122,10 @@ uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/$(TARGET)"
 
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET) $(TEST_TARGET)
+	rm -rf $(BUILD_DIR) $(TARGET) $(TEST_TARGET) $(SAN_TARGET)
 
 distclean: clean
-	rm -f snapshot.png
+	rm -f snapshot.png recording.gif
 
 help:
 	@echo "markee build targets:"
@@ -124,9 +134,10 @@ help:
 	@echo "  make release    Rebuild with full optimization (-O3)"
 	@echo "  make run        Build and launch ./$(TARGET)"
 	@echo "  make test       Build and run the C unit & socket API test suite"
+	@echo "  make sanitize   Build and run tests with ASan + UBSan"
 	@echo "  make install    Install $(TARGET) to $(BINDIR)"
 	@echo "  make uninstall  Remove $(TARGET) from $(BINDIR)"
 	@echo "  make clean      Remove build artifacts and binaries"
-	@echo "  make distclean  Clean everything including snapshot.png"
+	@echo "  make distclean  Clean everything including snapshot.png and recording.gif"
 
 -include $(DEPS)

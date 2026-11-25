@@ -54,7 +54,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 
 ## 5. Engineering, Testing & Distribution
 
-- [ ] **CI workflow (GitHub Actions on macOS & Linux):** Build cleanly with `-Wall -Wextra -Wpedantic`, run `make test`, and run an AddressSanitizer + UndefinedBehaviorSanitizer (`-fsanitize=address,undefined`) pass on every commit/PR.
+- [x] **CI workflow (GitHub Actions on macOS & Linux):** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds with `-Wall -Wextra -Wpedantic -Werror`, runs `./test_api`, runs `make sanitize` (ASan + UBSan), and validates `examples/*.py` on `macos-latest` and `ubuntu-latest`.
 - [ ] **Fuzz testing for C parsers:** Add libFuzzer harnesses for [gif.c](../src/gif.c), [json.c](../src/json.c), base64 decoding in [draw.c](../src/draw.c), and HTTP request parsing in [server.c](../src/server.c).
 - [ ] **Config file support (`~/.config/markee/config.ini`):** Persist default zoom, pixel shape, monochrome tint, port, and widget flags without repeating CLI arguments.
 - [ ] **Packaging & native bundles:**

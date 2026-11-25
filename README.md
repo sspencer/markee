@@ -67,6 +67,7 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | `make` | Build `./markee` (`-O2`) |
 | `make run` | Build and launch `./markee` |
 | `make test` | Build and run the C unit & socket API test suite (`./test_api`) |
+| `make sanitize` | Build and run `./test_api_san` under AddressSanitizer + UndefinedBehaviorSanitizer |
 | `make debug` / `make release` | Clean rebuild with `-O0 -g` or `-O3` |
 | `make install` / `make uninstall` | Install or remove in `~/.local/bin` (falls back to `/usr/local/bin`; override with `PREFIX=` / `DESTDIR=`) |
 | `make clean` / `make distclean` | Remove build artifacts (`distclean` also deletes `snapshot.png`) |
