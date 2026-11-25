@@ -220,6 +220,7 @@ Zero-dependency Python 3 integrations live in `examples/`:
 - [`examples/now_playing.py`](examples/now_playing.py) — Now Playing ticker for macOS Spotify/Apple Music and Linux `playerctl` with icon + clipped scrolling title (`python3 examples/now_playing.py --demo`)
 - [`examples/sysmon.py`](examples/sysmon.py) — Live CPU sparkline, memory meter, and network activity monitor for macOS & Linux (`python3 examples/sysmon.py`)
 - [`examples/git_watch.py`](examples/git_watch.py) — Local Git + test runner watcher (`--cmd "make test"`) or GitHub Actions CI monitor (`--github owner/repo`) with pass/fail notifications and melodies
+- [`examples/carousel.py`](examples/carousel.py) — Rotating status carousel daemon (`clock`, `date`, `sys`, `git`, `weather`, custom `--card` slides) with smooth transitions and `Space`/bezel advance (`python3 examples/carousel.py --cards clock,date,sys,git`)
 
 Minimal stdlib-only PNG upload and readback:
 

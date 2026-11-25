@@ -48,7 +48,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 - [x] **Now Playing ticker:** [`examples/now_playing.py`](../examples/now_playing.py) polls macOS Spotify/Apple Music (`osascript`) or Linux MPRIS (`playerctl`) and renders a music/pause icon + clipped scrolling track/artist marquee (`--demo` supported).
 - [x] **System monitor applet:** [`examples/sysmon.py`](../examples/sysmon.py) samples real CPU load, memory usage, and network throughput (macOS + Linux) and renders a live `sparkline` + `progress` meter dashboard.
 - [x] **CI / Git status watcher:** [`examples/git_watch.py`](../examples/git_watch.py) watches local git repos + optional test commands (`--cmd "make test"`) or GitHub Actions (`--github owner/repo`) and flashes pass/fail banners with alerts.
-- [ ] **Rotating carousel daemon:** Cycle through pluggable cards (clock, weather icon + temp, calendar next meeting, stocks/metrics) on a timer.
+- [x] **Rotating carousel daemon:** [`examples/carousel.py`](../examples/carousel.py) cycles pluggable cards (`clock`, `date`, `sys`, `git`, `weather`, and custom `--card` slides) with smooth transitions and bezel/`Space` advance via `GET /events`.
 
 ---
 
