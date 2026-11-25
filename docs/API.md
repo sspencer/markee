@@ -90,6 +90,7 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | | `POST` `PUT` | [`/pixel`](#post-pixel) | Set a single pixel |
 | **Settings** | `GET` | [`/brightness`](#get-brightness) | Read GUI brightness (`0–100`) |
 | | `POST` `PUT` | [`/brightness`](#post-brightness) | Set GUI brightness (`0–100`) |
+| | `GET` `POST` `PUT` `DELETE` | [`/idle`](#idle-dimming) | Configure or disable idle dimming / night mode |
 | | `GET` | [`/monochrome`](#get-monochrome) (`/mono`) | Read monochrome tint filter state |
 | | `POST` `PUT` | [`/monochrome`](#post-monochrome) (`/mono`) | Enable or disable the monochrome tint filter |
 | | `DELETE` | [`/monochrome`](#delete-monochrome) (`/mono`) | Disable the monochrome tint filter |
@@ -654,6 +655,22 @@ curl -X PUT  http://127.0.0.1:8080/brightness -d 60
 
 ```json
 {"ok":true,"brightness":60}
+```
+
+### Idle dimming
+
+**Methods:** `GET`, `POST`, `PUT`, `DELETE` · **Path:** `/idle`
+
+Automatically dims GUI brightness to a target level (`0–100`, default `20`) after `timeout_sec` seconds without API writes or user interaction, smoothly fading over 1 second and waking immediately on the next write or click.
+
+```bash
+curl -X POST http://127.0.0.1:8080/idle -d '{"timeout_sec":300,"brightness":15}'
+curl http://127.0.0.1:8080/idle
+curl -X DELETE http://127.0.0.1:8080/idle
+```
+
+```json
+{"enabled":true,"timeout_sec":300.00,"brightness":15,"dimmed":false}
 ```
 
 ### GET /monochrome

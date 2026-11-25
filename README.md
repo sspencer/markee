@@ -105,6 +105,8 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 | `--position <X,Y>` | Initial window position in screen pixels (e.g. `100,60`). Alias: `--pos` | Centered |
 | `--corner <place>` | Snap initial window to a monitor corner or edge: `center`, `top-left` (`tl`), `top-right` (`tr`), `bottom-left` (`bl`), `bottom-right` (`br`), `top`, `bottom` | `center` |
 | `--case <theme>` | Enclosure color theme: `white`, `charcoal` (`black`/`dark`), `orange`, `retro` (`beige`) | `white` |
+| `--idle-dim <sec>` | Automatically dim GUI brightness after `sec` seconds with no API writes or input | Off (`0`) |
+| `--idle-brightness <0..100>` | Dimmed GUI brightness level used by `--idle-dim` | `20` |
 | `--demo` | Start with the built-in 60 Hz demo animation instead of a blank display | Off |
 | `--mute` | Disable alert sound playback. Alias: `--no-audio` | Off |
 | `--headless` | Run the API server without a GUI window (60 Hz demo, scrolling text, `GET /frame`, and alert audio still run) | Off |

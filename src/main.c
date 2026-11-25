@@ -128,6 +128,8 @@ static void print_usage(const char *prog) {
            "                          bottom-right (br), top, bottom\n"
            "      --case <theme>      Enclosure color theme: white, charcoal, orange, retro\n"
            "                          (default: white)\n"
+           "      --idle-dim <sec>    Dim GUI brightness after N seconds with no API writes\n"
+           "      --idle-brightness <0..100>  Dimmed brightness level for --idle-dim (default: 20)\n"
            "      --demo              Start with the built-in demo animation (default: blank)\n"
            "      --mute              Disable alert sound playback (alias: --no-audio)\n"
            "      --headless          Run API server only without opening a GUI window\n"
@@ -196,6 +198,8 @@ int main(int argc, char **argv) {
     int pos_x = 0, pos_y = 0;
     MarkeeWindowCorner corner = MARKEE_CORNER_CENTER;
     MarkeeCaseTheme case_theme = MARKEE_CASE_WHITE;
+    double idle_dim_sec = 0.0;
+    uint8_t idle_brightness = 20;
     bool start_demo = false;
     bool mute = false;
     bool headless = false;
@@ -272,6 +276,22 @@ int main(int argc, char **argv) {
                         argv[i]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--idle-dim") == 0 && i + 1 < argc) {
+            char *end = NULL;
+            double sec = strtod(argv[++i], &end);
+            if (end == argv[i] || *end != '\0' || sec < 0.0 || sec > 86400.0) {
+                fprintf(stderr, "Invalid --idle-dim '%s' (expected seconds 0..86400)\n", argv[i]);
+                return 1;
+            }
+            idle_dim_sec = sec;
+        } else if (strcmp(argv[i], "--idle-brightness") == 0 && i + 1 < argc) {
+            char *end = NULL;
+            long b = strtol(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0' || b < 0 || b > 100) {
+                fprintf(stderr, "Invalid --idle-brightness '%s' (expected integer 0..100)\n", argv[i]);
+                return 1;
+            }
+            idle_brightness = (uint8_t)b;
         } else if (strcmp(argv[i], "--demo") == 0) {
             start_demo = true;
         } else if (strcmp(argv[i], "--blank") == 0) {
@@ -306,6 +326,9 @@ int main(int argc, char **argv) {
     }
     if (mono_enabled) {
         display_set_monochrome(&display, true, mono_color.r, mono_color.g, mono_color.b);
+    }
+    if (idle_dim_sec > 0.0) {
+        display_set_idle_dim(&display, idle_dim_sec, idle_brightness);
     }
 
     MarkeeAudio *audio = audio_create(!mute);

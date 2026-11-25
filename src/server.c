@@ -536,6 +536,7 @@ static const RouteMethods KNOWN_ROUTES[] = {
     {"/monochrome", "GET, POST, PUT, DELETE, OPTIONS"},
     {"/mono",       "GET, POST, PUT, DELETE, OPTIONS"},
     {"/brightness", "GET, POST, PUT, OPTIONS"},
+    {"/idle",       "GET, POST, PUT, DELETE, OPTIONS"},
     {"/demo",       "POST, OPTIONS"},
     {"/alert",      "GET, POST, OPTIONS"},
     {"/api/alert",  "GET, POST, OPTIONS"},
@@ -1138,6 +1139,97 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         display_set_brightness(disp, (uint8_t)b);
         char json[64];
         snprintf(json, sizeof(json), "{\"ok\":true,\"brightness\":%d}", b);
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* GET /idle */
+    if (strcmp(req->method, "GET") == 0 && strcmp(req->path, "/idle") == 0) {
+        double timeout = 0.0;
+        uint8_t ib = 20;
+        bool dimmed = false;
+        display_get_idle_dim(disp, &timeout, &ib, &dimmed);
+        char json[160];
+        snprintf(json, sizeof(json),
+                 "{\"enabled\":%s,\"timeout_sec\":%.2f,\"brightness\":%u,\"dimmed\":%s}",
+                 timeout > 0.0 ? "true" : "false", timeout, (unsigned)ib,
+                 dimmed ? "true" : "false");
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* DELETE /idle */
+    if (strcmp(req->method, "DELETE") == 0 && strcmp(req->path, "/idle") == 0) {
+        double timeout = 0.0;
+        uint8_t ib = 20;
+        display_get_idle_dim(disp, &timeout, &ib, NULL);
+        display_set_idle_dim(disp, 0.0, ib);
+        send_json(fd, 200, "OK", "{\"ok\":true,\"enabled\":false,\"timeout_sec\":0}", ka);
+        return;
+    }
+
+    /* POST or PUT /idle */
+    if ((strcmp(req->method, "POST") == 0 || strcmp(req->method, "PUT") == 0) &&
+        strcmp(req->path, "/idle") == 0) {
+        double timeout = 0.0;
+        uint8_t ib_cur = 20;
+        display_get_idle_dim(disp, &timeout, &ib_cur, NULL);
+        int ib = (int)ib_cur;
+        bool got_any = false;
+        bool valid = true;
+
+        char val[32];
+        if (query_get(req->query, "timeout", val, sizeof(val)) ||
+            query_get(req->query, "timeout_sec", val, sizeof(val))) {
+            char *end = NULL;
+            double d = strtod(val, &end);
+            if (end == val || *end != '\0' || d < 0.0 || d > 86400.0) {
+                valid = false;
+            } else {
+                timeout = d;
+                got_any = true;
+            }
+        }
+        if (valid && query_get(req->query, "brightness", val, sizeof(val))) {
+            if (!parse_int_param(val, &ib) || ib < 0 || ib > 100) {
+                valid = false;
+            } else {
+                got_any = true;
+            }
+        }
+        if (valid && !got_any && req->body && req->body_len > 0) {
+            JsonValue *bj = parse_body_json(req->body, req->body_len);
+            if (bj && bj->type == JSON_OBJECT) {
+                const JsonValue *jt = json_obj_get(bj, "timeout_sec");
+                if (!jt) jt = json_obj_get(bj, "timeout");
+                if (jt) {
+                    double d = -1.0;
+                    if (!json_as_double(jt, &d) || d < 0.0 || d > 86400.0) valid = false;
+                    else { timeout = d; got_any = true; }
+                }
+                const JsonValue *jb = json_obj_get(bj, "brightness");
+                if (valid && jb) {
+                    if (!json_member_int(bj, "brightness", &ib) || ib < 0 || ib > 100) valid = false;
+                    else got_any = true;
+                }
+            } else {
+                valid = false;
+            }
+            json_free(bj);
+        }
+
+        if (!valid || !got_any) {
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"provide timeout (0..86400 sec) and/or brightness (0..100)\"}",
+                      ka);
+            return;
+        }
+
+        display_set_idle_dim(disp, timeout, (uint8_t)ib);
+        char json[160];
+        snprintf(json, sizeof(json),
+                 "{\"ok\":true,\"enabled\":%s,\"timeout_sec\":%.2f,\"brightness\":%d}",
+                 timeout > 0.0 ? "true" : "false", timeout, ib);
         send_json(fd, 200, "OK", json, ka);
         return;
     }

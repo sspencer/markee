@@ -104,6 +104,11 @@ typedef struct {
     size_t event_count;
     uint64_t next_event_id;
     bool shutting_down;
+    double idle_dim_sec;                /* 0 = disabled; >0 = seconds before dimming GUI */
+    uint8_t idle_brightness;            /* Target dimmed GUI brightness (0..100, default 20) */
+    bool has_tick_time;
+    double last_tick_time;
+    double last_activity_time;
 } MarkeeDisplay;
 
 /* Initialize and destroy display state for the given resolution (width x height). */
@@ -159,6 +164,12 @@ void display_stop_gif(MarkeeDisplay *disp);
 void display_stop_gif_unlocked(MarkeeDisplay *disp);
 bool display_get_gif_status(MarkeeDisplay *disp, MarkeeGifStatus *out_status);
 bool display_is_gif_active(MarkeeDisplay *disp);
+
+/* Idle dimming / night mode (GUI brightness dims after timeout_sec of no writes). */
+void display_set_idle_dim(MarkeeDisplay *disp, double timeout_sec, uint8_t idle_brightness);
+void display_get_idle_dim(MarkeeDisplay *disp, double *timeout_sec,
+                          uint8_t *idle_brightness, bool *is_dimmed);
+void display_wake_activity(MarkeeDisplay *disp);
 
 /* Event ring buffer & long-poll / SSE wakeup helpers. */
 const char *display_event_type_name(MarkeeEventType type);

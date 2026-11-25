@@ -1967,9 +1967,42 @@ static void test_events_api(void) {
     assert(r.status == 400);
     free(r.body);
 
+    /* 6. Idle dimming / night mode (/idle) */
+    const char *idle_cfg = "{\"timeout_sec\":10,\"brightness\":15}";
+    r = do_request(port, "POST", "/idle", "application/json", idle_cfg, strlen(idle_cfg));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"enabled\":true") != NULL);
+    free(r.body);
+
+    uint8_t snap[MARKEE_FRAME_BYTES];
+    uint8_t eff_b = 0;
+    display_tick(&disp, 1.0);
+    assert(display_snapshot(&disp, snap, sizeof(snap), &eff_b) && eff_b == 100);
+
+    display_tick(&disp, 12.5); /* > 10s + 1s fade -> dimmed to 15 */
+    assert(display_snapshot(&disp, snap, sizeof(snap), &eff_b) && eff_b == 15);
+
+    r = do_request(port, "GET", "/idle", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"dimmed\":true") != NULL);
+    free(r.body);
+
+    /* API write wakes display back to full brightness */
+    r = do_request(port, "POST", "/fill?color=green", NULL, NULL, 0);
+    assert(r.status == 200);
+    free(r.body);
+    assert(display_snapshot(&disp, snap, sizeof(snap), &eff_b) && eff_b == 100);
+
+    /* DELETE /idle disables dimming */
+    r = do_request(port, "DELETE", "/idle", NULL, NULL, 0);
+    assert(r.status == 200);
+    free(r.body);
+    display_tick(&disp, 50.0);
+    assert(display_snapshot(&disp, snap, sizeof(snap), &eff_b) && eff_b == 100);
+
     server_stop(srv);
     display_destroy(&disp);
-    printf("[PASS] /events API (click/button/frame ring buffer, JSON polling, ?since, SSE stream)\n");
+    printf("[PASS] /events API & /idle dimming (ring buffer, SSE stream, night mode wake)\n");
 }
 
 int main(void) {

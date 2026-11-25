@@ -11,7 +11,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 - [x] **Window placement & persistence (`--position X,Y`, `--corner top-right|bottom-right|...`):** Park the bar in a predictable corner on launch (position persistence covered with config file support).
 - [x] **Enclosure color themes (`--case white|charcoal|orange|retro`):** Support alternate shell finishes (e.g., matte black, classic off-white, bright accent) via CLI flag or hotkey (`K`).
 - [x] **Interactive bezel / click events:** Clicks on the LED matrix (with exact pixel `x,y`), clicks on the bezel, and `Space`/`Enter` presses emit events over `GET /events`.
-- [ ] **Idle dimming / night mode:** Optional auto-dim after N minutes of no API updates, waking smoothly on the next request.
+- [x] **Idle dimming / night mode:** `--idle-dim <sec>`, `--idle-brightness <0..100>`, and `GET`/`POST`/`DELETE /idle` smoothly dim GUI brightness after inactivity and wake on the next write or interaction.
 
 ---
 

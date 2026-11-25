@@ -141,6 +141,7 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     disp->scroll.bg_pixels = bg_pixels;
     disp->gif.bg_pixels = gif_bg_pixels;
     disp->brightness = 100;
+    disp->idle_brightness = 20;
     disp->demo_active = start_demo;
     disp->next_event_id = 1;
     return true;
@@ -187,6 +188,9 @@ void display_push_event_unlocked(MarkeeDisplay *disp, MarkeeEventType type,
     ev->x = x;
     ev->y = y;
     snprintf(ev->detail, sizeof(ev->detail), "%s", detail ? detail : "");
+    if (disp->has_tick_time) {
+        disp->last_activity_time = disp->last_tick_time;
+    }
     pthread_cond_broadcast(&disp->event_cond);
 }
 
@@ -381,13 +385,27 @@ bool display_get_raw_rgb(MarkeeDisplay *disp, uint8_t *out_rgb, size_t out_cap) 
     return true;
 }
 
+static uint8_t compute_effective_brightness_unlocked(const MarkeeDisplay *disp) {
+    uint8_t b = disp->brightness;
+    if (disp->idle_dim_sec <= 0.0 || !disp->has_tick_time) return b;
+    double idle = disp->last_tick_time - disp->last_activity_time;
+    if (idle < disp->idle_dim_sec) return b;
+    uint8_t target = disp->idle_brightness < b ? disp->idle_brightness : b;
+    double fade = (idle - disp->idle_dim_sec); /* 1-second smooth ramp */
+    if (fade >= 1.0) return target;
+    double cur = (double)b + ((double)target - (double)b) * fade;
+    if (cur < 0.0) cur = 0.0;
+    if (cur > 100.0) cur = 100.0;
+    return (uint8_t)lround(cur);
+}
+
 bool display_snapshot(MarkeeDisplay *disp, uint8_t *out_rgb, size_t out_cap,
                       uint8_t *out_brightness) {
     if (!disp || !disp->pixels || !out_rgb || out_cap < disp->frame_bytes) return false;
     pthread_mutex_lock(&disp->lock);
     memcpy(out_rgb, disp->pixels, disp->frame_bytes);
     if (out_brightness) {
-        *out_brightness = disp->brightness;
+        *out_brightness = compute_effective_brightness_unlocked(disp);
     }
     bool mono = disp->mono_enabled;
     uint8_t tr = disp->mono_r, tg = disp->mono_g, tb = disp->mono_b;
@@ -404,6 +422,44 @@ void display_set_brightness(MarkeeDisplay *disp, uint8_t brightness) {
     if (brightness > 100) brightness = 100;
     pthread_mutex_lock(&disp->lock);
     disp->brightness = brightness;
+    if (disp->has_tick_time) {
+        disp->last_activity_time = disp->last_tick_time;
+    }
+    pthread_mutex_unlock(&disp->lock);
+}
+
+void display_set_idle_dim(MarkeeDisplay *disp, double timeout_sec, uint8_t idle_brightness) {
+    if (!disp) return;
+    if (timeout_sec < 0.0) timeout_sec = 0.0;
+    if (idle_brightness > 100) idle_brightness = 100;
+    pthread_mutex_lock(&disp->lock);
+    disp->idle_dim_sec = timeout_sec;
+    disp->idle_brightness = idle_brightness;
+    if (disp->has_tick_time) {
+        disp->last_activity_time = disp->last_tick_time;
+    }
+    pthread_mutex_unlock(&disp->lock);
+}
+
+void display_get_idle_dim(MarkeeDisplay *disp, double *timeout_sec,
+                          uint8_t *idle_brightness, bool *is_dimmed) {
+    if (!disp) return;
+    pthread_mutex_lock(&disp->lock);
+    if (timeout_sec) *timeout_sec = disp->idle_dim_sec;
+    if (idle_brightness) *idle_brightness = disp->idle_brightness;
+    if (is_dimmed) {
+        *is_dimmed = (disp->idle_dim_sec > 0.0 && disp->has_tick_time &&
+                      (disp->last_tick_time - disp->last_activity_time) >= disp->idle_dim_sec);
+    }
+    pthread_mutex_unlock(&disp->lock);
+}
+
+void display_wake_activity(MarkeeDisplay *disp) {
+    if (!disp) return;
+    pthread_mutex_lock(&disp->lock);
+    if (disp->has_tick_time) {
+        disp->last_activity_time = disp->last_tick_time;
+    }
     pthread_mutex_unlock(&disp->lock);
 }
 
@@ -852,6 +908,14 @@ static void tick_animations(MarkeeDisplay *disp, double time_sec) {
 
 void display_tick(MarkeeDisplay *disp, double time_sec) {
     if (!disp || !disp->pixels) return;
+
+    pthread_mutex_lock(&disp->lock);
+    if (!disp->has_tick_time) {
+        disp->has_tick_time = true;
+        disp->last_activity_time = time_sec;
+    }
+    disp->last_tick_time = time_sec;
+    pthread_mutex_unlock(&disp->lock);
 
     if (!display_is_demo_active(disp)) {
         tick_animations(disp, time_sec);
