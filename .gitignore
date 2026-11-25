@@ -1,0 +1,7 @@
+build/
+markee
+test_api
+snapshot.png
+*.o
+*.d
+.DS_Store
