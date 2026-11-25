@@ -295,12 +295,18 @@ static void test_http_socket_api(void) {
     uint16_t port = server_get_port(srv);
     assert(port > 0);
 
-    /* 1. GET /info */
+    /* 1. GET /info and GET /ui */
     HttpResp r = do_request(port, "GET", "/info", NULL, NULL, 0);
     assert(r.status == 200);
     assert(strstr((char *)r.body, "\"width\":72") != NULL);
     assert(strstr((char *)r.body, "\"height\":16") != NULL);
     assert(strstr((char *)r.body, "\"refresh_hz\":60") != NULL);
+    free(r.body);
+
+    r = do_request(port, "GET", "/ui", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr(r.content_type, "text/html") != NULL);
+    assert(strstr((char *)r.body, "markee Studio") != NULL);
     free(r.body);
 
     /* 2. POST /fill?color=12abef then GET /pixel */

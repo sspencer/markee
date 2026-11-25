@@ -77,6 +77,7 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | Group | Method | Path (aliases) | Summary |
 |---|---|---|---|
 | **Status** | `GET` | [`/info`](#get-info) (`/`, `/api/info`) | Resolution, settings, audio readiness, frame counter |
+| **Web UI** | `GET` | `/ui` | Built-in single-page browser studio (live preview, `/draw` editor, GIF/PNG dropzone, alerts) |
 | **Drawing** | `POST` `PUT` | [`/draw`](#post-draw) (`/api/draw`) | Run an atomic JSON batch of shapes, pixels, text, and images (optional `?ttl=<sec>`) |
 | **Notify** | `GET` `POST` `PUT` `DELETE` | [`/notify`](#post-notify) (`/api/notify`) | Show a transient notification banner or draw batch for `ttl` seconds, then restore prior state |
 | **Frames** | `GET` | [`/frame`](#get-frame) (`/frame.png`, `/frame.rgb`, `/api/frame`) | Read displayed pixels as a PNG or raw RGB24 |

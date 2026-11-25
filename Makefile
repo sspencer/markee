@@ -26,7 +26,8 @@ SRCS        := $(SRC_DIR)/main.c \
                $(SRC_DIR)/gif.c \
                $(SRC_DIR)/json.c \
                $(SRC_DIR)/renderer.c \
-               $(SRC_DIR)/server.c
+               $(SRC_DIR)/server.c \
+               $(SRC_DIR)/webui.c
 
 CORE_SRCS   := $(SRC_DIR)/audio.c \
                $(SRC_DIR)/display.c \
@@ -34,7 +35,8 @@ CORE_SRCS   := $(SRC_DIR)/audio.c \
                $(SRC_DIR)/gif.c \
                $(SRC_DIR)/json.c \
                $(SRC_DIR)/renderer.c \
-               $(SRC_DIR)/server.c
+               $(SRC_DIR)/server.c \
+               $(SRC_DIR)/webui.c
 
 OBJS        := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(SRCS))
 CORE_OBJS   := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(CORE_SRCS))

@@ -32,7 +32,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 
 ## 3. HTTP API & Client Ergonomics
 
-- [ ] **Built-in Web Playground (`GET /ui`):** Serve a self-contained single-page HTML/JS studio from `markee` to preview the display live, experiment with `/draw` JSON, drag-and-drop PNGs/GIFs, test alert sounds, and tweak brightness/monochrome.
+- [x] **Built-in Web Playground (`GET /ui`):** Self-contained single-page HTML/JS studio served directly by `markee` with live matrix preview, `/draw` JSON editor & presets, drag-and-drop PNG/GIF uploader, alert buttons, brightness slider, and monochrome presets.
 - [ ] **Client helper CLI (or subcommands):** Quick commands like `markee say "BUILD OK" --color green --chime`, `markee gif cat.gif --fill white`, or `markee timer 25m` so shell scripts don't need hand-built JSON, base64, and `curl` flags.
 - [x] **Live event stream (`GET /events` via SSE or WebSocket):** JSON polling (`?since=`, `?wait=`) and Server-Sent Events (`?stream=1` / `Accept: text/event-stream`) stream frame updates, LED clicks, and bezel button presses.
 - [ ] **Optional API token auth (`--token` / `MARKEE_TOKEN`):** Allow safe LAN binding (`--host 0.0.0.0`) with Bearer token protection.

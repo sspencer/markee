@@ -23,6 +23,7 @@
 #include "config.h"
 #include "draw.h"
 #include "json.h"
+#include "webui.h"
 
 struct MarkeeServer {
     MarkeeDisplay *disp;
@@ -520,6 +521,8 @@ typedef struct {
 
 static const RouteMethods KNOWN_ROUTES[] = {
     {"/",           "GET, OPTIONS"},
+    {"/ui",         "GET, OPTIONS"},
+    {"/ui/",        "GET, OPTIONS"},
     {"/info",       "GET, OPTIONS"},
     {"/api/info",   "GET, OPTIONS"},
     {"/frame",      "GET, POST, PUT, DELETE, OPTIONS"},
@@ -652,6 +655,15 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
 
     if (strcmp(req->method, "OPTIONS") == 0) {
         send_response(fd, 204, "No Content", "text/plain", "", 0, ka);
+        return;
+    }
+
+    /* GET /ui: embedded single-page Web Playground */
+    if (strcmp(req->method, "GET") == 0 &&
+        (strcmp(req->path, "/ui") == 0 || strcmp(req->path, "/ui/") == 0)) {
+        size_t html_len = 0;
+        const char *html = webui_html(&html_len);
+        send_response(fd, 200, "OK", "text/html; charset=utf-8", html, html_len, ka);
         return;
     }
 

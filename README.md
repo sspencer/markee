@@ -150,6 +150,7 @@ Available when running in GUI mode:
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | [`/info`](docs/API.md#get-info) | Resolution, settings, audio readiness, frame counter |
+| `GET` | `/ui` | Built-in Web Playground (live LED preview, `/draw` JSON editor, drag-and-drop GIF/PNG, alerts) |
 | `POST` `PUT` | [`/draw`](docs/API.md#post-draw) | Atomic JSON batch of `clear`, `pixel`, `line`, `rect`, `oval`, `polygon`, `text`, and `image` ops (optional `?ttl=<sec>`) |
 | `GET` `POST` `PUT` `DELETE` | [`/notify`](docs/API.md#post-notify) | Show a temporary notification banner/batch for `ttl` seconds, then auto-restore prior screen |
 | `GET` | [`/frame`](docs/API.md#get-frame) | Read displayed pixels as a PNG (`/frame.rgb` or `?format=raw` for raw RGB24) |
