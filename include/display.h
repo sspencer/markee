@@ -114,10 +114,13 @@ void display_set_demo(MarkeeDisplay *disp, bool active);
 bool display_is_demo_active(MarkeeDisplay *disp);
 uint64_t display_get_frames_received(MarkeeDisplay *disp);
 
-/* PNG I/O: decode an exact WxH PNG into the framebuffer, or encode current pixels as a WxH 24-bit PNG.
- * On success for display_encode_png(), caller must free *out_png with display_free_buffer(). */
+/* PNG I/O: decode an exact WxH PNG into the framebuffer, decode any PNG to RGBA32 (caller frees
+ * *out_rgba with free()), or encode current pixels as a WxH 24-bit PNG (caller frees *out_png
+ * with display_free_buffer()). */
 MarkeeResult display_load_png(MarkeeDisplay *disp, const uint8_t *png_data, size_t png_len,
                               int *actual_w, int *actual_h);
+bool display_decode_png_rgba(MarkeeDisplay *disp, const uint8_t *png_data, size_t png_len,
+                             uint8_t **out_rgba, int *out_w, int *out_h);
 MarkeeResult display_encode_png(MarkeeDisplay *disp, uint8_t **out_png, size_t *out_len);
 void display_free_buffer(uint8_t *buf);
 

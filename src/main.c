@@ -288,7 +288,7 @@ int main(int argc, char **argv) {
            width, height);
     printf("  POST /animate Upload animated GIF (auto-cropped/centered to %dx%d)\n",
            width, height);
-    printf("  POST /draw    Draw JSON ops (clear, pixel, line, rect, oval, polygon, text, gif)\n");
+    printf("  POST /draw    Draw JSON ops (clear, pixel, line, rect, oval, polygon, text, image)\n");
     printf("  POST /alert   Play alert sound (/alert/1..3 or ding, chime, bell; GET /alert to list)\n");
     printf("  GET  /info    Device status & capabilities\n");
     fflush(stdout);

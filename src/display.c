@@ -404,6 +404,46 @@ MarkeeResult display_load_png(MarkeeDisplay *disp, const uint8_t *png_data, size
     return res;
 }
 
+bool display_decode_png_rgba(MarkeeDisplay *disp, const uint8_t *png_data, size_t png_len,
+                             uint8_t **out_rgba, int *out_w, int *out_h) {
+    if (out_rgba) *out_rgba = NULL;
+    if (out_w) *out_w = 0;
+    if (out_h) *out_h = 0;
+    if (!disp || !png_data || !out_rgba || !out_w || !out_h ||
+        png_len < sizeof(PNG_SIG) || png_len > MARKEE_MAX_BODY_BYTES) {
+        return false;
+    }
+    if (memcmp(png_data, PNG_SIG, sizeof(PNG_SIG)) != 0) {
+        return false;
+    }
+
+    pthread_mutex_lock(&disp->png_lock);
+    Image img = LoadImageFromMemory(".png", png_data, (int)png_len);
+    if (img.data == NULL || img.width <= 0 || img.height <= 0 ||
+        img.width > MARKEE_GIF_MAX_SRC_DIM || img.height > MARKEE_GIF_MAX_SRC_DIM) {
+        if (img.data) UnloadImage(img);
+        pthread_mutex_unlock(&disp->png_lock);
+        return false;
+    }
+
+    ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    size_t nbytes = (size_t)img.width * (size_t)img.height * 4;
+    uint8_t *copy = malloc(nbytes);
+    if (!copy) {
+        UnloadImage(img);
+        pthread_mutex_unlock(&disp->png_lock);
+        return false;
+    }
+    memcpy(copy, img.data, nbytes);
+    *out_w = img.width;
+    *out_h = img.height;
+    *out_rgba = copy;
+
+    UnloadImage(img);
+    pthread_mutex_unlock(&disp->png_lock);
+    return true;
+}
+
 MarkeeResult display_encode_png(MarkeeDisplay *disp, uint8_t **out_png, size_t *out_len) {
     if (!disp || !disp->pixels || !out_png || !out_len) return MARKEE_ERR_INVALID_ARG;
     *out_png = NULL;

@@ -365,22 +365,23 @@ Draws single-line bitmap text without wrapping (overflowing glyphs are clipped).
 { "op": "text", "x": 16, "y": 4, "text": "READY", "font": "6x8", "color": "warmwhite" }
 ```
 
-#### `gif`
+#### `image`
 
-Draws a static or animated GIF87a/GIF89a sprite placed at `(x, y)` (top-left origin), clipped to the display bounds. Up to **8** animated `gif` ops can run simultaneously in a `/draw` batch, and they can be combined freely with static shapes, text, and scrolling text.
+Draws a PNG or GIF (`GIF87a`/`GIF89a`, static or animated) placed at `(x, y)` (top-left origin), clipped to the display bounds. Up to **8** animated GIF `image` ops can run simultaneously in a `/draw` batch (static PNGs and single-frame GIFs are baked directly into the framebuffer and do not count against this limit), and they can be combined freely with shapes, text, and scrolling text.
 
 | Field | Default | Description |
 |---|---|---|
-| `data` | **required** | Base64-encoded GIF bytes (optional `data:image/gif;base64,` URI prefix accepted; whitespace ignored) |
+| `data` | **required** | Base64-encoded PNG or GIF bytes (optional `data:image/png;base64,` or `data:image/gif;base64,` URI prefix accepted; whitespace ignored) |
 | `x`, `y` | `0` | Top-left placement on the display (may be negative; clipped to display bounds) |
-| `loop` | GIF setting | `0` (or `true`) = loop forever, `1` (or `false`) = play once and hold last frame, `N > 0` = play `N` times. If omitted or `null`, honors `NETSCAPE2.0` (multi-frame GIFs without `NETSCAPE2.0` loop infinitely) |
-| `fill` | transparent (`none`) | Color shown beneath transparent GIF pixels inside the GIF's `(x, y, w, h)` rectangle (any [color format](#color-formats) including `[r,g,b]`). When omitted, `null`, `"none"`, or `"transparent"`, underlying canvas pixels show through |
+| `loop` | GIF setting | **Animated GIFs only:** `0` (or `true`) = loop forever, `1` (or `false`) = play once and hold last frame, `N > 0` = play `N` times. If omitted or `null`, honors `NETSCAPE2.0` (multi-frame GIFs without `NETSCAPE2.0` loop infinitely). Safely ignored for PNGs and single-frame GIFs |
+| `fill` | transparent (`none`) | Color shown beneath transparent/semi-transparent pixels inside the image's `(x, y, w, h)` rectangle (any [color format](#color-formats) including `[r,g,b]`). PNG alpha is blended smoothly over `fill` (or over existing canvas pixels when `fill` is omitted, `null`, `"none"`, or `"transparent"`) |
 
 ```json
-{ "op": "gif", "x": 2, "y": 2, "data": "R0lGODlh...", "loop": 0, "fill": "white" }
+{ "op": "image", "x": 2, "y": 2, "data": "iVBORw0KGgo...", "fill": "white" }
+{ "op": "image", "x": 2, "y": 0, "data": "R0lGODlh...", "loop": 0, "fill": "white" }
 ```
 
-**Validation errors (`400`):** missing/empty `data`, invalid base64, invalid/corrupt GIF, negative or non-integer `loop`, invalid `fill` color, or more than 8 animated `gif` ops in a single batch.
+**Validation errors (`400`):** missing/empty `data`, invalid base64, unsupported or corrupt PNG/GIF data, negative or non-integer `loop` (for GIFs), invalid `fill` color, or more than 8 animated GIF `image` ops in a single batch.
 
 ### Fonts
 

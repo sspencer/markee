@@ -1601,7 +1601,7 @@ static char *encode_base64(const uint8_t *in, size_t len) {
     return out;
 }
 
-static void test_draw_gif_op(void) {
+static void test_draw_image_op(void) {
     MarkeeDisplay disp;
     assert(display_init(&disp, 72, 16, false));
     MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
@@ -1609,7 +1609,7 @@ static void test_draw_gif_op(void) {
     uint16_t port = server_get_port(srv);
     uint8_t pr, pg, pb;
 
-    /* 6x6 transparent 2-frame sprite:
+    /* 6x6 transparent 2-frame GIF sprite:
      * index 0 = transparent; (0,0) and (5,5) are opaque:
      * Frame 0: red (50 ms), Frame 1: green (60 ms), disposal=2 */
     uint8_t gct[4 * 3] = {0, 0, 0,  255, 0, 0,  0, 255, 0,  0, 0, 255};
@@ -1628,14 +1628,14 @@ static void test_draw_gif_op(void) {
 
     char *b64 = encode_base64(sprite.buf, sprite.len);
 
-    /* 1. Placed GIF without fill over #002040 background + sibling static pixel */
+    /* 1. Placed animated GIF without fill over #002040 background + sibling static pixel */
     {
         char *body = malloc(strlen(b64) + 512);
         assert(body != NULL);
         sprintf(body,
                 "["
                 "{\"op\":\"clear\",\"color\":\"#002040\"},"
-                "{\"op\":\"gif\",\"x\":4,\"y\":2,\"data\":\"data:image/gif;base64,%s\",\"loop\":0},"
+                "{\"op\":\"image\",\"x\":4,\"y\":2,\"data\":\"data:image/gif;base64,%s\",\"loop\":0},"
                 "{\"op\":\"pixel\",\"x\":30,\"y\":8,\"color\":\"amber\"}"
                 "]",
                 b64);
@@ -1673,7 +1673,7 @@ static void test_draw_gif_op(void) {
         sprintf(body,
                 "["
                 "{\"op\":\"clear\",\"color\":\"#001020\"},"
-                "{\"op\":\"gif\",\"x\":-2,\"y\":3,\"data\":\"%s\",\"loop\":1,\"fill\":\"white\"}"
+                "{\"op\":\"image\",\"x\":-2,\"y\":3,\"data\":\"%s\",\"loop\":1,\"fill\":\"white\"}"
                 "]",
                 b64);
         HttpResp r = do_request(port, "POST", "/draw", "application/json", body, strlen(body));
@@ -1702,15 +1702,15 @@ static void test_draw_gif_op(void) {
         assert(pr == 255 && pg == 255 && pb == 255);
     }
 
-    /* 3. Two simultaneous GIFs with different loop counts + scrolling text */
+    /* 3. Two simultaneous animated GIFs with different loop counts + scrolling text */
     {
         char *body = malloc(strlen(b64) * 2 + 512);
         assert(body != NULL);
         sprintf(body,
                 "["
                 "{\"op\":\"clear\"},"
-                "{\"op\":\"gif\",\"x\":2,\"y\":5,\"data\":\"%s\",\"loop\":1,\"fill\":[10,20,30]},"
-                "{\"op\":\"gif\",\"x\":60,\"y\":5,\"data\":\"%s\",\"loop\":0},"
+                "{\"op\":\"image\",\"x\":2,\"y\":5,\"data\":\"%s\",\"loop\":1,\"fill\":[10,20,30]},"
+                "{\"op\":\"image\",\"x\":60,\"y\":5,\"data\":\"%s\",\"loop\":0},"
                 "{\"op\":\"text\",\"x\":20,\"y\":0,\"text\":\"HI\",\"color\":\"white\",\"scroll\":true,\"speed\":20}"
                 "]",
                 b64, b64);
@@ -1731,36 +1731,142 @@ static void test_draw_gif_op(void) {
         assert(pr == 255 && pg == 0 && pb == 0); /* right GIF wrapped back to frame 0 (red) */
     }
 
-    /* 4. Validation errors and atomic rollback */
+    /* 4. PNG support: RGBA alpha blending over canvas & over fill, negative x clipping, loop ignored */
     {
-        HttpResp r = do_request(port, "POST", "/draw", "application/json",
-                                "[{\"op\":\"gif\"}]", strlen("[{\"op\":\"gif\"}]"));
+        /* 4x2 RGBA PNG:
+         * (0,0) = opaque red (255,0,0,255)
+         * (1,0) = transparent (0,0,0,0)
+         * (2,0) = ~50% green (0,255,0,128)
+         * (3,0) = opaque blue (0,0,255,255) */
+        uint8_t png_rgba[4 * 2 * 4] = {
+            255, 0, 0, 255,    0, 0, 0, 0,      0, 255, 0, 128,    0, 0, 255, 255,
+            0, 0, 0, 0,        255, 255, 0, 255, 0, 0, 0, 0,       255, 0, 255, 255
+        };
+        Image pimg = {
+            .data = png_rgba,
+            .width = 4,
+            .height = 2,
+            .mipmaps = 1,
+            .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
+        };
+        int png_len = 0;
+        unsigned char *png_raw = ExportImageToMemory(pimg, ".png", &png_len);
+        assert(png_raw != NULL && png_len > 0);
+        char *png_b64 = encode_base64(png_raw, (size_t)png_len);
+        MemFree(png_raw);
+
+        /* 4a. PNG without fill over #0000c8 blue background, with 'loop' accidentally specified */
+        char *body = malloc(strlen(png_b64) + 512);
+        assert(body != NULL);
+        sprintf(body,
+                "["
+                "{\"op\":\"clear\",\"color\":\"#0000c8\"},"
+                "{\"op\":\"image\",\"x\":10,\"y\":4,\"data\":\"data:image/png;base64,%s\",\"loop\":5}"
+                "]",
+                png_b64);
+        HttpResp r = do_request(port, "POST", "/draw", "application/json", body, strlen(body));
+        free(body);
+        assert(r.status == 200);
+        free(r.body);
+        assert(!display_is_gif_active(&disp)); /* PNG is static */
+
+        /* (10,4) opaque red */
+        assert(display_get_pixel(&disp, 10, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 0 && pb == 0);
+        /* (11,4) transparent -> underlying #0000c8 */
+        assert(display_get_pixel(&disp, 11, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 0 && pb == 0xc8);
+        /* (12,4) 50% green (a=128) over #0000c8 -> g ~ 128, b ~ 100 */
+        assert(display_get_pixel(&disp, 12, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg >= 127 && pg <= 129 && pb >= 99 && pb <= 101);
+        /* (13,4) opaque blue */
+        assert(display_get_pixel(&disp, 13, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 0 && pb == 255);
+
+        /* 4b. PNG with fill="white" and negative x clipping; outside rect stays black */
+        body = malloc(strlen(png_b64) + 512);
+        assert(body != NULL);
+        sprintf(body,
+                "["
+                "{\"op\":\"clear\"},"
+                "{\"op\":\"image\",\"x\":-1,\"y\":2,\"data\":\"%s\",\"fill\":\"white\",\"loop\":\"ignored\"}"
+                "]",
+                png_b64);
+        r = do_request(port, "POST", "/draw", "application/json", body, strlen(body));
+        free(body);
+        assert(r.status == 200);
+        free(r.body);
+
+        /* x=-1 clips col 0; col 1 (transparent) lands at (0,2) => white fill */
+        assert(display_get_pixel(&disp, 0, 2, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 255 && pb == 255);
+        /* col 2 (green a=128) lands at (1,2) => blended with white (r~127, g=255, b~127) */
+        assert(display_get_pixel(&disp, 1, 2, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr >= 126 && pr <= 128 && pg == 255 && pb >= 126 && pb <= 128);
+        /* col 3 (blue) lands at (2,2) => opaque blue */
+        assert(display_get_pixel(&disp, 2, 2, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 0 && pb == 255);
+        /* (3,2) outside PNG rect => black */
+        assert(display_get_pixel(&disp, 3, 2, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 0 && pb == 0);
+
+        free(png_b64);
+    }
+
+    /* 5. Validation errors and atomic rollback */
+    {
+        /* Restore an active animated GIF to verify rollback preserves it */
+        char *setup = malloc(strlen(b64) + 128);
+        sprintf(setup, "[{\"op\":\"clear\"},{\"op\":\"image\",\"data\":\"%s\"}]", b64);
+        HttpResp r = do_request(port, "POST", "/draw", "application/json", setup, strlen(setup));
+        assert(r.status == 200);
+        free(r.body);
+        free(setup);
+        assert(display_is_gif_active(&disp));
+
+        /* Old 'gif' op name is no longer accepted */
+        char *old_op = malloc(strlen(b64) + 128);
+        sprintf(old_op, "[{\"op\":\"gif\",\"data\":\"%s\"}]", b64);
+        r = do_request(port, "POST", "/draw", "application/json", old_op, strlen(old_op));
+        assert(r.status == 400);
+        free(r.body);
+        free(old_op);
+
+        r = do_request(port, "POST", "/draw", "application/json",
+                       "[{\"op\":\"image\"}]", strlen("[{\"op\":\"image\"}]"));
         assert(r.status == 400);
         free(r.body);
 
         r = do_request(port, "POST", "/draw", "application/json",
-                       "[{\"op\":\"gif\",\"data\":\"!!!not-base64!!!\"}]",
-                       strlen("[{\"op\":\"gif\",\"data\":\"!!!not-base64!!!\"}]"));
+                       "[{\"op\":\"image\",\"data\":\"!!!not-base64!!!\"}]",
+                       strlen("[{\"op\":\"image\",\"data\":\"!!!not-base64!!!\"}]"));
+        assert(r.status == 400);
+        free(r.body);
+
+        /* Valid base64 ("hello world") but neither PNG nor GIF -> 400 */
+        r = do_request(port, "POST", "/draw", "application/json",
+                       "[{\"op\":\"image\",\"data\":\"aGVsbG8gd29ybGQ=\"}]",
+                       strlen("[{\"op\":\"image\",\"data\":\"aGVsbG8gd29ybGQ=\"}]"));
         assert(r.status == 400);
         free(r.body);
 
         char *bad_loop = malloc(strlen(b64) + 128);
-        sprintf(bad_loop, "[{\"op\":\"gif\",\"data\":\"%s\",\"loop\":-2}]", b64);
+        sprintf(bad_loop, "[{\"op\":\"image\",\"data\":\"%s\",\"loop\":-2}]", b64);
         r = do_request(port, "POST", "/draw", "application/json", bad_loop, strlen(bad_loop));
         assert(r.status == 400);
         free(r.body);
         free(bad_loop);
 
         char *bad_fill = malloc(strlen(b64) + 128);
-        sprintf(bad_fill, "[{\"op\":\"gif\",\"data\":\"%s\",\"fill\":\"notacolor\"}]", b64);
+        sprintf(bad_fill, "[{\"op\":\"image\",\"data\":\"%s\",\"fill\":\"notacolor\"}]", b64);
         r = do_request(port, "POST", "/draw", "application/json", bad_fill, strlen(bad_fill));
         assert(r.status == 400);
         free(r.body);
         free(bad_fill);
 
-        /* Atomic rollback: valid gif followed by unknown op leaves previous active GIF intact */
+        /* Atomic rollback: valid image followed by unknown op leaves previous active GIF intact */
         char *rollback = malloc(strlen(b64) + 128);
-        sprintf(rollback, "[{\"op\":\"clear\"},{\"op\":\"gif\",\"data\":\"%s\"},{\"op\":\"nope\"}]", b64);
+        sprintf(rollback, "[{\"op\":\"clear\"},{\"op\":\"image\",\"data\":\"%s\"},{\"op\":\"nope\"}]", b64);
         r = do_request(port, "POST", "/draw", "application/json", rollback, strlen(rollback));
         assert(r.status == 400);
         free(r.body);
@@ -1772,7 +1878,7 @@ static void test_draw_gif_op(void) {
     free(sprite.buf);
     server_stop(srv);
     display_destroy(&disp);
-    printf("[PASS] POST /draw 'gif' op (x/y placement, clipping, transparent/fill, loop, multi-GIF + scroll, atomic)\n");
+    printf("[PASS] POST /draw 'image' op (PNG + GIF, alpha/fill, x/y clipping, loop, multi-GIF + scroll, atomic)\n");
 }
 
 int main(void) {
@@ -1791,7 +1897,7 @@ int main(void) {
     test_alert_http_api();
     test_gif_decoder_crop_center_and_features();
     test_animate_http_api();
-    test_draw_gif_op();
+    test_draw_image_op();
 
     printf("\nAll markee tests passed!\n");
     return 0;

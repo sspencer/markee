@@ -712,6 +712,53 @@ static bool decode_base64(const char *s, uint8_t **out_buf, size_t *out_len) {
     return true;
 }
 
+static bool has_png_magic(const uint8_t *data, size_t len) {
+    static const uint8_t sig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    return data && len >= sizeof(sig) && memcmp(data, sig, sizeof(sig)) == 0;
+}
+
+/* Composite an RGBA32 image onto an RGB24 buffer at (place_x, place_y), clipped to (bw, bh).
+ * If has_fill is true, alpha is blended against fill_c; otherwise against the existing pixel. */
+static void blit_rgba_buf(uint8_t *buf, int bw, int bh,
+                          const uint8_t *rgba, int iw, int ih,
+                          int place_x, int place_y,
+                          bool has_fill, MarkeeColor fill_c) {
+    int clip_x0 = place_x > 0 ? place_x : 0;
+    int clip_y0 = place_y > 0 ? place_y : 0;
+    int clip_x1 = (place_x + iw) < bw ? (place_x + iw) : bw;
+    int clip_y1 = (place_y + ih) < bh ? (place_y + ih) : bh;
+    if (clip_x0 >= clip_x1 || clip_y0 >= clip_y1) return;
+
+    for (int dy = clip_y0; dy < clip_y1; dy++) {
+        int sy = dy - place_y;
+        const uint8_t *src_row = rgba + (size_t)sy * (size_t)iw * 4;
+        uint8_t *dst_row = buf + (size_t)dy * (size_t)bw * 3;
+        for (int dx = clip_x0; dx < clip_x1; dx++) {
+            int sx = dx - place_x;
+            uint32_t sr = src_row[(size_t)sx * 4 + 0];
+            uint32_t sg = src_row[(size_t)sx * 4 + 1];
+            uint32_t sb = src_row[(size_t)sx * 4 + 2];
+            uint32_t sa = src_row[(size_t)sx * 4 + 3];
+            uint8_t *dp = dst_row + (size_t)dx * 3;
+            if (sa == 255U) {
+                dp[0] = (uint8_t)sr;
+                dp[1] = (uint8_t)sg;
+                dp[2] = (uint8_t)sb;
+            } else if (has_fill) {
+                uint32_t inv = 255U - sa;
+                dp[0] = (uint8_t)((sr * sa + (uint32_t)fill_c.r * inv + 127U) / 255U);
+                dp[1] = (uint8_t)((sg * sa + (uint32_t)fill_c.g * inv + 127U) / 255U);
+                dp[2] = (uint8_t)((sb * sa + (uint32_t)fill_c.b * inv + 127U) / 255U);
+            } else if (sa > 0U) {
+                uint32_t inv = 255U - sa;
+                dp[0] = (uint8_t)((sr * sa + (uint32_t)dp[0] * inv + 127U) / 255U);
+                dp[1] = (uint8_t)((sg * sa + (uint32_t)dp[1] * inv + 127U) / 255U);
+                dp[2] = (uint8_t)((sb * sa + (uint32_t)dp[2] * inv + 127U) / 255U);
+            }
+        }
+    }
+}
+
 typedef struct {
     MarkeeGif *gifs[MARKEE_MAX_GIF_LAYERS];
     size_t count;
@@ -725,7 +772,8 @@ static void staged_gifs_clear(StagedGifs *sg) {
     sg->count = 0;
 }
 
-static bool exec_single_op_buf(uint8_t *buf, uint8_t *static_bg,
+static bool exec_single_op_buf(MarkeeDisplay *disp,
+                               uint8_t *buf, uint8_t *static_bg,
                                int bw, int bh, size_t frame_bytes,
                                MarkeeScrollState *scroll_state,
                                StagedGifs *staged_gifs,
@@ -922,85 +970,109 @@ static bool exec_single_op_buf(uint8_t *buf, uint8_t *static_bg,
         return true;
     }
 
-    if (strcasecmp(op, "gif") == 0) {
+    if (strcasecmp(op, "image") == 0) {
         const char *b64 = json_as_string(json_obj_get(obj, "data"));
         if (!b64 || !*b64) {
-            snprintf(err_buf, err_size, "'gif' op requires base64 string field 'data'");
+            snprintf(err_buf, err_size, "'image' op requires base64 string field 'data'");
             return false;
         }
 
         int x = opt_int(obj, "x", 0);
         int y = opt_int(obj, "y", 0);
 
-        int loop_override = -1;
-        const JsonValue *jloop = json_obj_get(obj, "loop");
-        if (jloop && jloop->type != JSON_NULL) {
-            if (jloop->type == JSON_BOOL) {
-                loop_override = jloop->u.bval ? 0 : 1;
-            } else if (jloop->type == JSON_NUMBER) {
-                double d = jloop->u.nval;
-                if (d != (double)(long)d || d < 0.0 || d > 2147483647.0) {
-                    snprintf(err_buf, err_size,
-                             "'gif' op 'loop' must be a non-negative integer (0 = infinite)");
-                    return false;
-                }
-                loop_override = (int)d;
-            } else {
-                snprintf(err_buf, err_size,
-                         "'gif' op 'loop' must be a non-negative integer (0 = infinite)");
-                return false;
-            }
-        }
-
         bool has_fill = false;
         MarkeeColor fill_c = {0, 0, 0};
         const JsonValue *jfill = json_obj_get(obj, "fill");
         if (jfill && !parse_json_color(jfill, &has_fill, &fill_c)) {
-            snprintf(err_buf, err_size, "invalid 'fill' value for 'gif' op");
+            snprintf(err_buf, err_size, "invalid 'fill' value for 'image' op");
             return false;
         }
 
-        uint8_t *gif_bytes = NULL;
-        size_t gif_len = 0;
-        if (!decode_base64(b64, &gif_bytes, &gif_len)) {
-            snprintf(err_buf, err_size, "'gif' op contains invalid base64 in 'data'");
+        uint8_t *img_bytes = NULL;
+        size_t img_len = 0;
+        if (!decode_base64(b64, &img_bytes, &img_len)) {
+            snprintf(err_buf, err_size, "'image' op contains invalid base64 in 'data'");
             return false;
         }
 
-        MarkeeGif *gif = NULL;
-        bool decoded = gif_decode_placed(gif_bytes, gif_len, bw, bh, x, y,
-                                         has_fill, fill_c.r, fill_c.g, fill_c.b,
-                                         &gif, err_buf, err_size);
-        free(gif_bytes);
-        if (!decoded) {
-            return false;
-        }
-
-        if (loop_override >= 0) {
-            gif->loop_count = (gif->frame_count <= 1) ? 1 : loop_override;
-        }
-
-        gif_blit_frame(gif, 0, buf, bw, bh);
-
-        if (gif->frame_count > 1 && gif->width > 0 && gif->height > 0) {
-            if (staged_gifs->count >= MARKEE_MAX_GIF_LAYERS) {
-                gif_free(gif);
-                snprintf(err_buf, err_size,
-                         "at most %d animated 'gif' ops are supported per /draw batch",
-                         MARKEE_MAX_GIF_LAYERS);
+        if (has_png_magic(img_bytes, img_len)) {
+            /* Static PNG: 'loop' is safely ignored if specified. */
+            uint8_t *rgba = NULL;
+            int iw = 0, ih = 0;
+            bool ok_png = display_decode_png_rgba(disp, img_bytes, img_len, &rgba, &iw, &ih);
+            free(img_bytes);
+            if (!ok_png) {
+                snprintf(err_buf, err_size, "invalid PNG data in 'image' op");
                 return false;
             }
-            staged_gifs->gifs[staged_gifs->count++] = gif;
-        } else {
-            /* Static 1-frame GIF (or completely off-screen): bake into static background. */
-            gif_blit_frame(gif, 0, static_bg, bw, bh);
-            gif_free(gif);
+            blit_rgba_buf(buf, bw, bh, rgba, iw, ih, x, y, has_fill, fill_c);
+            blit_rgba_buf(static_bg, bw, bh, rgba, iw, ih, x, y, has_fill, fill_c);
+            free(rgba);
+            return true;
         }
-        return true;
+
+        if (gif_has_magic(img_bytes, img_len)) {
+            int loop_override = -1;
+            const JsonValue *jloop = json_obj_get(obj, "loop");
+            if (jloop && jloop->type != JSON_NULL) {
+                if (jloop->type == JSON_BOOL) {
+                    loop_override = jloop->u.bval ? 0 : 1;
+                } else if (jloop->type == JSON_NUMBER) {
+                    double d = jloop->u.nval;
+                    if (d != (double)(long)d || d < 0.0 || d > 2147483647.0) {
+                        free(img_bytes);
+                        snprintf(err_buf, err_size,
+                                 "'image' op 'loop' must be a non-negative integer (0 = infinite)");
+                        return false;
+                    }
+                    loop_override = (int)d;
+                } else {
+                    free(img_bytes);
+                    snprintf(err_buf, err_size,
+                             "'image' op 'loop' must be a non-negative integer (0 = infinite)");
+                    return false;
+                }
+            }
+
+            MarkeeGif *gif = NULL;
+            bool decoded = gif_decode_placed(img_bytes, img_len, bw, bh, x, y,
+                                             has_fill, fill_c.r, fill_c.g, fill_c.b,
+                                             &gif, err_buf, err_size);
+            free(img_bytes);
+            if (!decoded) {
+                return false;
+            }
+
+            if (loop_override >= 0) {
+                gif->loop_count = (gif->frame_count <= 1) ? 1 : loop_override;
+            }
+
+            gif_blit_frame(gif, 0, buf, bw, bh);
+
+            if (gif->frame_count > 1 && gif->width > 0 && gif->height > 0) {
+                if (staged_gifs->count >= MARKEE_MAX_GIF_LAYERS) {
+                    gif_free(gif);
+                    snprintf(err_buf, err_size,
+                             "at most %d animated 'image' ops are supported per /draw batch",
+                             MARKEE_MAX_GIF_LAYERS);
+                    return false;
+                }
+                staged_gifs->gifs[staged_gifs->count++] = gif;
+            } else {
+                /* Static 1-frame GIF (or completely off-screen): bake into static background. */
+                gif_blit_frame(gif, 0, static_bg, bw, bh);
+                gif_free(gif);
+            }
+            return true;
+        }
+
+        free(img_bytes);
+        snprintf(err_buf, err_size, "'image' op 'data' must be a valid PNG or GIF image");
+        return false;
     }
 
     snprintf(err_buf, err_size,
-             "unknown op '%s' (supported: line, rect, oval, polygon, text, pixel, clear, gif)",
+             "unknown op '%s' (supported: line, rect, oval, polygon, text, pixel, clear, image)",
              op);
     return false;
 }
@@ -1050,7 +1122,7 @@ bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
     bool ok = true;
     int executed = 0;
     for (size_t i = 0; i < root->u.arr.count; i++) {
-        if (!exec_single_op_buf(stage, static_bg, disp->width, disp->height, frame_bytes,
+        if (!exec_single_op_buf(disp, stage, static_bg, disp->width, disp->height, frame_bytes,
                                 &next_scroll, &staged_gifs,
                                 root->u.arr.items[i], err_buf, err_size)) {
             ok = false;
