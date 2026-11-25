@@ -143,6 +143,7 @@ static void print_usage(const char *prog) {
            "  K                       Cycle enclosure case color theme\n"
            "  M                       Toggle monochrome filter on/off (default amber #ffbf00)\n"
            "  P                       Toggle pixel shape (square / circle)\n"
+           "  R                       Start/stop recording animated GIF (saves recording.gif)\n"
            "  S                       Save current frame to snapshot.png\n"
            "  T                       Toggle always-on-top window mode\n"
            "  SPACE / ENTER           Emit an 'action' button event on GET /events\n"
@@ -483,6 +484,28 @@ int main(int argc, char **argv) {
                 layout.pixel_shape = (layout.pixel_shape == MARKEE_PIXEL_SQUARE)
                                          ? MARKEE_PIXEL_CIRCLE
                                          : MARKEE_PIXEL_SQUARE;
+            }
+            if (IsKeyPressed(KEY_R)) {
+                bool rec_active = false;
+                display_get_record_status(&display, &rec_active, NULL, NULL, NULL);
+                if (!rec_active) {
+                    display_record_start(&display, 15, 300);
+                    printf("Recording started (press R again to save recording.gif)\n");
+                    fflush(stdout);
+                } else {
+                    uint8_t *gif = NULL;
+                    size_t glen = 0;
+                    if (display_record_stop(&display, &gif, &glen)) {
+                        FILE *fp = fopen("recording.gif", "wb");
+                        if (fp) {
+                            fwrite(gif, 1, glen, fp);
+                            fclose(fp);
+                            printf("Saved recording.gif (%zu bytes)\n", glen);
+                        }
+                        free(gif);
+                    }
+                    fflush(stdout);
+                }
             }
             if (IsKeyPressed(KEY_S)) {
                 save_snapshot_png(&display, "snapshot.png");

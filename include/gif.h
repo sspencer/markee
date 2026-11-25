@@ -78,6 +78,13 @@ bool gif_decode_placed(const uint8_t *data, size_t len, int dst_w, int dst_h,
 void gif_blit_frame(const MarkeeGif *gif, size_t frame_idx,
                     uint8_t *dst_rgb, int dst_w, int dst_h);
 
+/* Encode a sequence of contiguous w*h*3 RGB24 frames into an animated GIF89a buffer
+ * (infinite NETSCAPE2.0 loop, exact per-frame palette when <=256 unique colors else 6x6x6
+ * RGB cube + grayscale fallback). Caller frees *out_gif with free(). */
+bool gif_encode_frames(const uint8_t *rgb_frames, size_t frame_count,
+                       int width, int height, uint16_t delay_cs,
+                       uint8_t **out_gif, size_t *out_len);
+
 /* Release a decoded MarkeeGif. Safe to call with NULL. */
 void gif_free(MarkeeGif *gif);
 

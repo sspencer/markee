@@ -2406,9 +2406,42 @@ static void test_widgets_api(void) {
         server_set_token(srv, NULL);
     }
 
+    /* 10. Animated GIF recording (/record -> tick 3 distinct colors -> DELETE /record -> decode) */
+    {
+        r = do_request(port, "POST", "/record?fps=10&max_frames=20", NULL, NULL, 0);
+        assert(r.status == 200);
+        free(r.body);
+
+        r = do_request(port, "POST", "/fill?color=red", NULL, NULL, 0); free(r.body);
+        display_tick(&disp, 30.0);
+        r = do_request(port, "POST", "/fill?color=green", NULL, NULL, 0); free(r.body);
+        display_tick(&disp, 30.15);
+        r = do_request(port, "POST", "/fill?color=blue", NULL, NULL, 0); free(r.body);
+        display_tick(&disp, 30.30);
+
+        r = do_request(port, "GET", "/record", NULL, NULL, 0);
+        assert(r.status == 200);
+        assert(strstr((char *)r.body, "\"frames\":3") != NULL);
+        free(r.body);
+
+        r = do_request(port, "DELETE", "/record", NULL, NULL, 0);
+        assert(r.status == 200);
+        assert(strcmp(r.content_type, "image/gif") == 0);
+        assert(gif_has_magic(r.body, r.body_len));
+
+        MarkeeGif *rec = NULL;
+        assert(gif_decode(r.body, r.body_len, 72, 16, &rec, NULL, 0));
+        assert(rec->frame_count == 3);
+        assert(rec->frames[0] == 255 && rec->frames[1] == 0 && rec->frames[2] == 0);
+        assert(rec->frames[rec->frame_bytes + 0] == 0 && rec->frames[rec->frame_bytes + 1] == 255);
+        assert(rec->frames[2 * rec->frame_bytes + 2] == 255);
+        gif_free(rec);
+        free(r.body);
+    }
+
     server_stop(srv);
     display_destroy(&disp);
-    printf("[PASS] built-in widgets, transitions, icons, gradients, alpha, CLI & token auth\n");
+    printf("[PASS] built-in widgets, transitions, icons, gradients, alpha, CLI, token auth & GIF recording\n");
 }
 
 int main(void) {

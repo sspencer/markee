@@ -909,3 +909,232 @@ void gif_free(MarkeeGif *gif) {
     free(gif->delays_ms);
     free(gif);
 }
+
+/* --- Compact GIF89a Animated Encoder (for recording) --- */
+
+typedef struct {
+    uint8_t *buf;
+    size_t len;
+    size_t cap;
+    bool oom;
+} GifEncBuf;
+
+static void enc_push(GifEncBuf *b, uint8_t v) {
+    if (b->oom) return;
+    if (b->len == b->cap) {
+        size_t ncap = b->cap ? b->cap * 2 : 4096;
+        uint8_t *nb = realloc(b->buf, ncap);
+        if (!nb) { b->oom = true; return; }
+        b->buf = nb;
+        b->cap = ncap;
+    }
+    b->buf[b->len++] = v;
+}
+
+static void enc_push_bytes(GifEncBuf *b, const void *src, size_t n) {
+    if (b->oom || n == 0) return;
+    if (b->len + n > b->cap) {
+        size_t ncap = b->cap ? b->cap : 4096;
+        while (ncap < b->len + n) ncap *= 2;
+        uint8_t *nb = realloc(b->buf, ncap);
+        if (!nb) { b->oom = true; return; }
+        b->buf = nb;
+        b->cap = ncap;
+    }
+    memcpy(b->buf + b->len, src, n);
+    b->len += n;
+}
+
+static void enc_push_u16(GifEncBuf *b, uint16_t v) {
+    enc_push(b, (uint8_t)(v & 0xFF));
+    enc_push(b, (uint8_t)((v >> 8) & 0xFF));
+}
+
+typedef struct {
+    GifEncBuf *out;
+    uint8_t sub[255];
+    size_t sub_len;
+    uint32_t bit_buf;
+    int bit_count;
+} GifEncBits;
+
+static void enc_flush_sub(GifEncBits *w) {
+    if (w->sub_len > 0) {
+        enc_push(w->out, (uint8_t)w->sub_len);
+        enc_push_bytes(w->out, w->sub, w->sub_len);
+        w->sub_len = 0;
+    }
+}
+
+static void enc_write_code(GifEncBits *w, int code, int bits) {
+    w->bit_buf |= ((uint32_t)code << w->bit_count);
+    w->bit_count += bits;
+    while (w->bit_count >= 8) {
+        w->sub[w->sub_len++] = (uint8_t)(w->bit_buf & 0xFF);
+        w->bit_buf >>= 8;
+        w->bit_count -= 8;
+        if (w->sub_len == 255) enc_flush_sub(w);
+    }
+}
+
+static void enc_finish_bits(GifEncBits *w) {
+    if (w->bit_count > 0) {
+        w->sub[w->sub_len++] = (uint8_t)(w->bit_buf & 0xFF);
+        w->bit_buf = 0;
+        w->bit_count = 0;
+    }
+    enc_flush_sub(w);
+    enc_push(w->out, 0x00);
+}
+
+/* Build an exact palette if <=256 unique colors exist in the frame; otherwise use a 6x6x6 cube + 40-step gray ramp. */
+static void quantize_frame_rgb(const uint8_t *rgb, size_t px_count,
+                               uint8_t palette[256 * 3], uint8_t *indices) {
+    uint32_t uniq[256];
+    size_t ucount = 0;
+    bool exact = true;
+
+    for (size_t i = 0; i < px_count; i++) {
+        uint32_t c = ((uint32_t)rgb[i * 3 + 0] << 16) |
+                     ((uint32_t)rgb[i * 3 + 1] << 8) |
+                     (uint32_t)rgb[i * 3 + 2];
+        size_t found = ucount;
+        for (size_t j = 0; j < ucount; j++) {
+            if (uniq[j] == c) { found = j; break; }
+        }
+        if (found == ucount) {
+            if (ucount >= 256) {
+                exact = false;
+                break;
+            }
+            uniq[ucount++] = c;
+        }
+        indices[i] = (uint8_t)found;
+    }
+
+    if (exact) {
+        memset(palette, 0, 256 * 3);
+        for (size_t j = 0; j < ucount; j++) {
+            palette[j * 3 + 0] = (uint8_t)((uniq[j] >> 16) & 0xFF);
+            palette[j * 3 + 1] = (uint8_t)((uniq[j] >> 8) & 0xFF);
+            palette[j * 3 + 2] = (uint8_t)(uniq[j] & 0xFF);
+        }
+        return;
+    }
+
+    /* Fallback 6x6x6 uniform RGB cube (0..215) + 40-step grayscale ramp (216..255) */
+    size_t idx = 0;
+    for (int r = 0; r < 6; r++) {
+        for (int g = 0; g < 6; g++) {
+            for (int b = 0; b < 6; b++) {
+                palette[idx * 3 + 0] = (uint8_t)(r * 51);
+                palette[idx * 3 + 1] = (uint8_t)(g * 51);
+                palette[idx * 3 + 2] = (uint8_t)(b * 51);
+                idx++;
+            }
+        }
+    }
+    for (int k = 0; k < 40; k++) {
+        uint8_t v = (uint8_t)((k * 255) / 39);
+        palette[idx * 3 + 0] = v;
+        palette[idx * 3 + 1] = v;
+        palette[idx * 3 + 2] = v;
+        idx++;
+    }
+    for (size_t i = 0; i < px_count; i++) {
+        int r = (rgb[i * 3 + 0] * 5 + 127) / 255;
+        int g = (rgb[i * 3 + 1] * 5 + 127) / 255;
+        int b = (rgb[i * 3 + 2] * 5 + 127) / 255;
+        indices[i] = (uint8_t)(r * 36 + g * 6 + b);
+    }
+}
+
+bool gif_encode_frames(const uint8_t *rgb_frames, size_t frame_count,
+                       int width, int height, uint16_t delay_cs,
+                       uint8_t **out_gif, size_t *out_len) {
+    if (out_gif) *out_gif = NULL;
+    if (out_len) *out_len = 0;
+    if (!rgb_frames || frame_count == 0 || !out_gif || !out_len ||
+        width < 1 || width > 65535 || height < 1 || height > 65535) {
+        return false;
+    }
+    if (delay_cs < 2) delay_cs = 2;
+
+    size_t px_count = (size_t)width * (size_t)height;
+    size_t frame_bytes = px_count * 3;
+    uint8_t *indices = malloc(px_count);
+    if (!indices) return false;
+
+    GifEncBuf out = {0};
+    /* Header + Logical Screen Descriptor (no GCT; each frame carries a 256-entry LCT) */
+    enc_push_bytes(&out, "GIF89a", 6);
+    enc_push_u16(&out, (uint16_t)width);
+    enc_push_u16(&out, (uint16_t)height);
+    enc_push(&out, 0x70); /* 8-bit color resolution, no GCT */
+    enc_push(&out, 0x00);
+    enc_push(&out, 0x00);
+
+    /* NETSCAPE2.0 infinite loop extension */
+    if (frame_count > 1) {
+        enc_push(&out, 0x21);
+        enc_push(&out, 0xFF);
+        enc_push(&out, 11);
+        enc_push_bytes(&out, "NETSCAPE2.0", 11);
+        enc_push(&out, 3);
+        enc_push(&out, 0x01);
+        enc_push_u16(&out, 0);
+        enc_push(&out, 0x00);
+    }
+
+    uint8_t palette[256 * 3];
+    for (size_t f = 0; f < frame_count && !out.oom; f++) {
+        quantize_frame_rgb(rgb_frames + f * frame_bytes, px_count, palette, indices);
+
+        /* Graphic Control Extension */
+        enc_push(&out, 0x21);
+        enc_push(&out, 0xF9);
+        enc_push(&out, 4);
+        enc_push(&out, 0x04); /* disposal=1 (do not dispose), no transparency */
+        enc_push_u16(&out, delay_cs);
+        enc_push(&out, 0x00);
+        enc_push(&out, 0x00);
+
+        /* Image Descriptor with 256-color LCT */
+        enc_push(&out, 0x2C);
+        enc_push_u16(&out, 0);
+        enc_push_u16(&out, 0);
+        enc_push_u16(&out, (uint16_t)width);
+        enc_push_u16(&out, (uint16_t)height);
+        enc_push(&out, 0x87); /* LCT flag + 256 entries */
+        enc_push_bytes(&out, palette, sizeof(palette));
+
+        /* Valid 9-bit LZW stream with periodic Clear codes */
+        enc_push(&out, 8); /* min_code_size */
+        GifEncBits bw = {0};
+        bw.out = &out;
+        enc_write_code(&bw, 256, 9); /* Clear */
+        int emitted = 0;
+        for (size_t i = 0; i < px_count; i++) {
+            enc_write_code(&bw, indices[i], 9);
+            emitted++;
+            if (emitted >= 200) {
+                enc_write_code(&bw, 256, 9);
+                emitted = 0;
+            }
+        }
+        enc_write_code(&bw, 257, 9); /* EOI */
+        enc_finish_bits(&bw);
+    }
+
+    enc_push(&out, 0x3B); /* GIF Trailer */
+    free(indices);
+
+    if (out.oom || !out.buf) {
+        free(out.buf);
+        return false;
+    }
+
+    *out_gif = out.buf;
+    *out_len = out.len;
+    return true;
+}

@@ -37,7 +37,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 - [x] **Live event stream (`GET /events` via SSE or WebSocket):** JSON polling (`?since=`, `?wait=`) and Server-Sent Events (`?stream=1` / `Accept: text/event-stream`) stream frame updates, LED clicks, and bezel button presses.
 - [x] **Optional API token auth (`--token` / `MARKEE_TOKEN`):** Constant-time Bearer token (`Authorization: Bearer <token>` or `?token=`) authentication returning `401 Unauthorized` when configured for safe LAN binding.
 - [x] **Custom alert melodies:** Synthesize arbitrary note sequences (`POST /alert` with `?melody=` or `{"melody":"C5:120,E5:120,G5:240"}`, `R` for rests, up to 32 notes) using the built-in bell/chime synthesizer.
-- [ ] **GIF recording (`POST /record` or hotkey `R`):** Capture a live sequence of displayed frames directly to an animated `.gif` for sharing demos, docs, and bug reports.
+- [x] **GIF recording (`POST /record` or hotkey `R`):** Capture live frames at configurable FPS into a lossless/quantized animated GIF89a via `POST`/`GET`/`DELETE /record` or hotkey `R` (`recording.gif`).
 
 ---
 

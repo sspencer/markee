@@ -419,6 +419,7 @@ void display_destroy(MarkeeDisplay *disp) {
     free(disp->notify.saved_scroll_bg);
     free(disp->notify.saved_gif_bg);
     free(disp->notify.saved_widget_bg);
+    free(disp->rec.frames);
     disp->pixels = NULL;
     disp->scroll.bg_pixels = NULL;
     disp->gif.bg_pixels = NULL;
@@ -428,6 +429,114 @@ void display_destroy(MarkeeDisplay *disp) {
     disp->notify.saved_scroll_bg = NULL;
     disp->notify.saved_gif_bg = NULL;
     disp->notify.saved_widget_bg = NULL;
+    disp->rec.frames = NULL;
+}
+
+bool display_record_start(MarkeeDisplay *disp, int fps, size_t max_frames) {
+    if (!disp || !disp->pixels) return false;
+    if (fps < 2) fps = 2;
+    if (fps > 30) fps = 30;
+    if (max_frames == 0) max_frames = 300;
+    size_t max_by_mem = MARKEE_GIF_MAX_BYTES / disp->frame_bytes;
+    if (max_by_mem == 0) max_by_mem = 1;
+    if (max_frames > max_by_mem) max_frames = max_by_mem;
+    if (max_frames > 1200) max_frames = 1200;
+
+    pthread_mutex_lock(&disp->lock);
+    free(disp->rec.frames);
+    disp->rec.frames = NULL;
+    disp->rec.frame_count = 0;
+    disp->rec.frame_cap = 0;
+    disp->rec.fps = fps;
+    disp->rec.max_frames = max_frames;
+    disp->rec.active = true;
+    disp->rec.has_last_capture = false;
+    disp->rec.last_capture_time = 0.0;
+    pthread_mutex_unlock(&disp->lock);
+    return true;
+}
+
+void display_get_record_status(MarkeeDisplay *disp, bool *active, size_t *frames,
+                               int *fps, size_t *max_frames) {
+    if (!disp) return;
+    pthread_mutex_lock(&disp->lock);
+    if (active) *active = disp->rec.active;
+    if (frames) *frames = disp->rec.frame_count;
+    if (fps) *fps = disp->rec.fps;
+    if (max_frames) *max_frames = disp->rec.max_frames;
+    pthread_mutex_unlock(&disp->lock);
+}
+
+bool display_record_stop(MarkeeDisplay *disp, uint8_t **out_gif, size_t *out_len) {
+    if (out_gif) *out_gif = NULL;
+    if (out_len) *out_len = 0;
+    if (!disp || !out_gif || !out_len) return false;
+
+    pthread_mutex_lock(&disp->lock);
+    uint8_t *frames = disp->rec.frames;
+    size_t count = disp->rec.frame_count;
+    int fps = disp->rec.fps > 0 ? disp->rec.fps : 15;
+    disp->rec.frames = NULL;
+    disp->rec.frame_count = 0;
+    disp->rec.frame_cap = 0;
+    disp->rec.active = false;
+    disp->rec.has_last_capture = false;
+    pthread_mutex_unlock(&disp->lock);
+
+    if (!frames || count == 0) {
+        free(frames);
+        return false;
+    }
+
+    uint16_t delay_cs = (uint16_t)lround(100.0 / (double)fps);
+    if (delay_cs < 2) delay_cs = 2;
+    bool ok = gif_encode_frames(frames, count, disp->width, disp->height, delay_cs,
+                                out_gif, out_len);
+    free(frames);
+    return ok;
+}
+
+static void record_maybe_capture(MarkeeDisplay *disp, double time_sec) {
+    pthread_mutex_lock(&disp->lock);
+    if (!disp->rec.active) {
+        pthread_mutex_unlock(&disp->lock);
+        return;
+    }
+    double interval = 1.0 / (double)(disp->rec.fps > 0 ? disp->rec.fps : 15);
+    if (disp->rec.has_last_capture && (time_sec - disp->rec.last_capture_time) < interval - 1e-4) {
+        pthread_mutex_unlock(&disp->lock);
+        return;
+    }
+    if (disp->rec.frame_count >= disp->rec.max_frames) {
+        disp->rec.active = false;
+        pthread_mutex_unlock(&disp->lock);
+        return;
+    }
+    if (disp->rec.frame_count == disp->rec.frame_cap) {
+        size_t ncap = disp->rec.frame_cap ? disp->rec.frame_cap * 2 : 32;
+        if (ncap > disp->rec.max_frames) ncap = disp->rec.max_frames;
+        uint8_t *nb = realloc(disp->rec.frames, ncap * disp->frame_bytes);
+        if (!nb) {
+            disp->rec.active = false;
+            pthread_mutex_unlock(&disp->lock);
+            return;
+        }
+        disp->rec.frames = nb;
+        disp->rec.frame_cap = ncap;
+    }
+    uint8_t *dst = disp->rec.frames + disp->rec.frame_count * disp->frame_bytes;
+    memcpy(dst, disp->pixels, disp->frame_bytes);
+    apply_transition_unlocked(disp, dst);
+    bool mono = disp->mono_enabled;
+    uint8_t tr = disp->mono_r, tg = disp->mono_g, tb = disp->mono_b;
+    disp->rec.frame_count++;
+    disp->rec.last_capture_time = time_sec;
+    disp->rec.has_last_capture = true;
+    pthread_mutex_unlock(&disp->lock);
+
+    if (mono) {
+        apply_monochrome_buffer(dst, disp->frame_bytes, tr, tg, tb);
+    }
 }
 
 const char *display_event_type_name(MarkeeEventType type) {
@@ -1369,6 +1478,7 @@ void display_tick(MarkeeDisplay *disp, double time_sec) {
 
     if (!display_is_demo_active(disp)) {
         tick_animations(disp, time_sec);
+        record_maybe_capture(disp, time_sec);
         return;
     }
 
@@ -1439,6 +1549,7 @@ void display_tick(MarkeeDisplay *disp, double time_sec) {
     }
     pthread_mutex_unlock(&disp->lock);
     free(buf);
+    record_maybe_capture(disp, time_sec);
 }
 
 void display_tick_demo(MarkeeDisplay *disp, double time_sec) {

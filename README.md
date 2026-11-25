@@ -151,6 +151,7 @@ Available when running in GUI mode:
 | `K` | Cycle enclosure color theme (`white` / `charcoal` / `orange` / `retro`) |
 | `M` | Toggle the monochrome filter (reuses last tint color, or amber `#ffbf00`) |
 | `P` | Toggle pixel shape (`square` / `circle`) |
+| `R` | Start/stop animated GIF recording (saves `recording.gif` in the working directory) |
 | `S` | Save current frame to `snapshot.png` in the working directory (includes monochrome filter if on) |
 | `T` | Toggle always-on-top window mode |
 | `SPACE` / `ENTER` | Emit an `action` button event on `GET /events` |

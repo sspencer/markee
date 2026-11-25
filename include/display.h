@@ -145,6 +145,17 @@ typedef struct {
 } MarkeeNotifyState;
 
 typedef struct {
+    bool active;
+    int fps;
+    size_t max_frames;
+    size_t frame_count;
+    size_t frame_cap;
+    uint8_t *frames;     /* Captured RGB24 frames (with monochrome applied) */
+    bool has_last_capture;
+    double last_capture_time;
+} MarkeeRecordState;
+
+typedef struct {
     pthread_mutex_t lock;
     pthread_cond_t event_cond;
     pthread_mutex_t png_lock;
@@ -166,6 +177,7 @@ typedef struct {
     MarkeeTransitionState trans;
     int pending_alert_sound;            /* 0=none, 1..3=pending sound from autonomous widget */
     MarkeeNotifyState notify;
+    MarkeeRecordState rec;
     MarkeeEvent events[MARKEE_EVENT_RING_CAP];
     size_t event_head;
     size_t event_count;
@@ -270,6 +282,12 @@ size_t display_get_events_since(MarkeeDisplay *disp, uint64_t since_id,
 size_t display_wait_for_events(MarkeeDisplay *disp, uint64_t since_id, int timeout_ms,
                                MarkeeEvent *out, size_t max_out);
 void display_signal_shutdown(MarkeeDisplay *disp);
+
+/* Live animated GIF recording (captures frames during display_tick()). */
+bool display_record_start(MarkeeDisplay *disp, int fps, size_t max_frames);
+bool display_record_stop(MarkeeDisplay *disp, uint8_t **out_gif, size_t *out_len);
+void display_get_record_status(MarkeeDisplay *disp, bool *active, size_t *frames,
+                               int *fps, size_t *max_frames);
 
 /* Drain an optional alert sound ID (1..3, or 0 if none) queued by a finished countdown widget. */
 int display_take_pending_alert(MarkeeDisplay *disp);

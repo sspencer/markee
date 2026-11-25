@@ -101,6 +101,7 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | | `POST` | [`/alert`](#post-alert), `/alert/<id\|name>` (`/api/alert`) | Play one of the 3 gentle alert sounds |
 | **Events** | `GET` | [`/events`](#get-events) (`/api/events`) | Poll or stream (SSE) display click, bezel button, and frame update events |
 | | `POST` | [`/events`](#get-events) (`/api/events`) | Inject a click or button event (useful for automation & headless testing) |
+| **Record** | `GET` `POST` `DELETE` | [`/record`](#gif-recording) (`/api/record`) | Start, inspect, or stop recording displayed frames to an animated `image/gif` |
 | **CORS** | `OPTIONS` | `*` | CORS preflight (`204 No Content`) |
 
 ---
@@ -945,6 +946,22 @@ curl -N "http://127.0.0.1:8080/events?stream=1"
 ```
 
 `POST /events` accepts `{"type":"button"|"click","x":12,"y":7,"detail":"action"}` to inject a synthetic event for scripts or headless testing.
+
+---
+
+## GIF Recording
+
+**Methods:** `POST`, `GET`, `DELETE` · **Path:** `/record` (alias `/api/record`)
+
+Records live frames (including demo, animations, widgets, transitions, and monochrome tint) into an animated GIF89a:
+
+```bash
+curl -X POST "http://127.0.0.1:8080/record?fps=15&max_frames=300"
+# ... let display animate ...
+curl -X DELETE -o capture.gif http://127.0.0.1:8080/record
+```
+
+`GET /record` returns `{"recording":true,"frames":42,"fps":15,"max_frames":300}`. In GUI mode, press `R` to start/stop recording to `recording.gif`.
 
 ---
 

@@ -554,8 +554,10 @@ static const RouteMethods KNOWN_ROUTES[] = {
     {"/api/alert",  "GET, POST, OPTIONS"},
     {"/alerts",     "GET, OPTIONS"},
     {"/api/alerts", "GET, OPTIONS"},
-    {"/events",     "GET, POST, OPTIONS"},
-    {"/api/events", "GET, POST, OPTIONS"},
+    {"/events",         "GET, POST, OPTIONS"},
+    {"/api/events",     "GET, POST, OPTIONS"},
+    {"/record",         "GET, POST, DELETE, OPTIONS"},
+    {"/api/record",     "GET, POST, DELETE, OPTIONS"},
 };
 
 /* If path is "/alert/<seg>" or "/api/alert/<seg>" (single segment), return pointer to <seg>. */
@@ -1940,6 +1942,66 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         snprintf(json, sizeof(json), "{\"ok\":true,\"id\":%llu}",
                  (unsigned long long)display_get_last_event_id(disp));
         send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* GET /record or /api/record */
+    if (strcmp(req->method, "GET") == 0 &&
+        (strcmp(req->path, "/record") == 0 || strcmp(req->path, "/api/record") == 0)) {
+        bool active = false;
+        size_t frames = 0, max_f = 0;
+        int fps = 0;
+        display_get_record_status(disp, &active, &frames, &fps, &max_f);
+        char json[160];
+        snprintf(json, sizeof(json),
+                 "{\"recording\":%s,\"frames\":%zu,\"fps\":%d,\"max_frames\":%zu}",
+                 active ? "true" : "false", frames, fps, max_f);
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* POST /record or /api/record: start capturing frames into an animated GIF */
+    if (strcmp(req->method, "POST") == 0 &&
+        (strcmp(req->path, "/record") == 0 || strcmp(req->path, "/api/record") == 0)) {
+        int fps = 15;
+        int max_f = 300;
+        char val[32];
+        if (query_get(req->query, "fps", val, sizeof(val))) {
+            if (!parse_int_param(val, &fps) || fps < 2 || fps > 30) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"fps must be an integer 2..30\"}", ka);
+                return;
+            }
+        }
+        if (query_get(req->query, "max_frames", val, sizeof(val))) {
+            if (!parse_int_param(val, &max_f) || max_f < 1 || max_f > 1200) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"max_frames must be an integer 1..1200\"}", ka);
+                return;
+            }
+        }
+        display_record_start(disp, fps, (size_t)max_f);
+        char json[128];
+        snprintf(json, sizeof(json),
+                 "{\"ok\":true,\"recording\":true,\"fps\":%d,\"max_frames\":%d}",
+                 fps, max_f);
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* DELETE /record or /api/record: stop recording and return animated image/gif */
+    if (strcmp(req->method, "DELETE") == 0 &&
+        (strcmp(req->path, "/record") == 0 || strcmp(req->path, "/api/record") == 0)) {
+        uint8_t *gif = NULL;
+        size_t gif_len = 0;
+        if (!display_record_stop(disp, &gif, &gif_len)) {
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"no recorded frames available (call POST /record first)\"}",
+                      ka);
+            return;
+        }
+        send_response(fd, 200, "OK", "image/gif", gif, gif_len, ka);
+        free(gif);
         return;
     }
 
