@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "audio.h"
 #include "display.h"
 
 typedef struct MarkeeServer MarkeeServer;
@@ -11,6 +12,10 @@ typedef struct MarkeeServer MarkeeServer;
 /* Start the embedded HTTP/TCP socket server on host:port (port 0 picks an ephemeral port).
  * Returns NULL on failure. */
 MarkeeServer *server_start(MarkeeDisplay *disp, const char *host, uint16_t port);
+
+/* Same as server_start(), also attaching an optional alert audio engine (may be NULL). */
+MarkeeServer *server_start_ex(MarkeeDisplay *disp, MarkeeAudio *audio,
+                              const char *host, uint16_t port);
 
 /* Return the actual bound TCP port (useful when port=0 was passed). */
 uint16_t server_get_port(const MarkeeServer *srv);

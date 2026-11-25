@@ -13,13 +13,15 @@ TEST_DIR    := tests
 BUILD_DIR   := build
 
 SRCS        := $(SRC_DIR)/main.c \
+               $(SRC_DIR)/audio.c \
                $(SRC_DIR)/display.c \
                $(SRC_DIR)/draw.c \
                $(SRC_DIR)/json.c \
                $(SRC_DIR)/renderer.c \
                $(SRC_DIR)/server.c
 
-CORE_SRCS   := $(SRC_DIR)/display.c \
+CORE_SRCS   := $(SRC_DIR)/audio.c \
+               $(SRC_DIR)/display.c \
                $(SRC_DIR)/draw.c \
                $(SRC_DIR)/json.c \
                $(SRC_DIR)/renderer.c \
@@ -39,7 +41,7 @@ ifeq ($(strip $(RAYLIB_LIBS)),)
   ifeq ($(UNAME_S),Darwin)
     BREW_PREFIX := $(shell brew --prefix raylib 2>/dev/null || echo /opt/homebrew/opt/raylib)
     RAYLIB_CFLAGS := -I$(BREW_PREFIX)/include
-    RAYLIB_LIBS   := -L$(BREW_PREFIX)/lib -lraylib -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
+    RAYLIB_LIBS   := -L$(BREW_PREFIX)/lib -lraylib -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo -framework CoreAudio -framework AudioToolbox
   else
     RAYLIB_LIBS   := -lraylib -lGL -lm -ldl -lrt -lX11
   endif

@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "audio.h"
 #include "config.h"
 #include "display.h"
 #include "draw.h"
@@ -827,6 +828,212 @@ static void test_audit_fixes(void) {
     printf("[PASS] audit fixes (escaping, 405, URL decode, JSON, strict brightness, 414, defaults, bind)\n");
 }
 
+static void test_alert_audio_synthesis(void) {
+    /* Identifier parsing: 1..3 and case-insensitive names; invalid values rejected */
+    assert(audio_parse_alert_id("1") == 1);
+    assert(audio_parse_alert_id("2") == 2);
+    assert(audio_parse_alert_id("3") == 3);
+    assert(audio_parse_alert_id("ding") == 1);
+    assert(audio_parse_alert_id("CHIME") == 2);
+    assert(audio_parse_alert_id(" Bell ") == 3);
+    assert(audio_parse_alert_id("0") == 0);
+    assert(audio_parse_alert_id("4") == 0);
+    assert(audio_parse_alert_id("siren") == 0);
+    assert(audio_parse_alert_id("") == 0);
+    assert(audio_parse_alert_id(NULL) == 0);
+
+    int16_t *pcms[MARKEE_ALERT_COUNT] = {0};
+    size_t counts[MARKEE_ALERT_COUNT] = {0};
+
+    for (int id = 1; id <= MARKEE_ALERT_COUNT; id++) {
+        const MarkeeAlertInfo *info = audio_get_alert_info(id);
+        assert(info != NULL && info->id == id && info->name != NULL && info->duration_ms > 0);
+
+        unsigned int sr = 0;
+        assert(audio_synthesize_pcm(id, &pcms[id - 1], &counts[id - 1], &sr));
+        assert(sr == 44100U);
+        assert(counts[id - 1] >= sr / 4); /* at least 250 ms */
+
+        int16_t *s = pcms[id - 1];
+        size_t n = counts[id - 1];
+
+        /* Starts and ends cleanly near zero (no DC step / click) */
+        assert(abs(s[0]) < 16);
+        assert(abs(s[n - 1]) < 16);
+
+        /* Compute peak, RMS, and DC mean */
+        int peak = 0;
+        double sum = 0.0;
+        double sum_sq = 0.0;
+        for (size_t i = 0; i < n; i++) {
+            int a = abs(s[i]);
+            if (a > peak) peak = a;
+            double v = (double)s[i] / 32767.0;
+            sum += v;
+            sum_sq += v * v;
+        }
+        double rms = sqrt(sum_sq / (double)n);
+        double dc = fabs(sum / (double)n);
+
+        /* Comfortable non-clipping peak (~0.50 full scale) and audible energy */
+        assert(peak >= 12000 && peak <= 20000);
+        assert(rms > 0.03 && rms < 0.45);
+        assert(dc < 0.01);
+    }
+
+    /* Verify all 3 sounds are distinct waveforms */
+    assert(counts[0] != counts[1] && counts[1] != counts[2]);
+    assert(memcmp(pcms[0], pcms[1], counts[0] < counts[1] ? counts[0] : counts[1]) != 0);
+    assert(memcmp(pcms[1], pcms[2], counts[1] < counts[2] ? counts[1] : counts[2]) != 0);
+
+    for (int i = 0; i < MARKEE_ALERT_COUNT; i++) free(pcms[i]);
+    printf("[PASS] synthesized alert sounds (ding, chime, bell: clean edges, non-clipping, distinct)\n");
+}
+
+static void test_alert_http_api(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, true));
+    /* Silent engine (open_device=false) so unit tests don't play audio out loud */
+    MarkeeAudio *audio = audio_create(false);
+    assert(audio != NULL);
+    assert(!audio_is_ready(audio));
+
+    MarkeeServer *srv = server_start_ex(&disp, audio, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+
+    /* 1. GET /alert lists all 3 sounds and audio state */
+    HttpResp r = do_request(port, "GET", "/alert", NULL, NULL, 0);
+    assert(r.status == 200);
+    JsonValue *j = json_parse((const char *)r.body, r.body_len, NULL, 0);
+    assert(j != NULL && j->type == JSON_OBJECT);
+    const JsonValue *sounds = json_obj_get(j, "sounds");
+    assert(sounds != NULL && sounds->type == JSON_ARRAY && sounds->u.arr.count == 3);
+    assert(strstr((char *)r.body, "\"name\":\"ding\"") != NULL);
+    assert(strstr((char *)r.body, "\"name\":\"chime\"") != NULL);
+    assert(strstr((char *)r.body, "\"name\":\"bell\"") != NULL);
+    json_free(j);
+    free(r.body);
+
+    /* GET /alerts alias works too */
+    r = do_request(port, "GET", "/alerts", NULL, NULL, 0);
+    assert(r.status == 200);
+    free(r.body);
+
+    /* GET /info includes audio_ready and alert_sounds */
+    r = do_request(port, "GET", "/info", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"audio_ready\":false") != NULL);
+    assert(strstr((char *)r.body, "\"alert_sounds\":3") != NULL);
+    free(r.body);
+
+    /* 2. POST /alert with empty body defaults to sound 1 (ding) at volume 100 */
+    r = do_request(port, "POST", "/alert", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"id\":1") != NULL);
+    assert(strstr((char *)r.body, "\"name\":\"ding\"") != NULL);
+    assert(strstr((char *)r.body, "\"volume\":100") != NULL);
+    assert(strstr((char *)r.body, "\"played\":false") != NULL);
+    assert(audio_get_trigger_count(audio) == 1);
+    assert(audio_get_last_alert_id(audio) == 1);
+    assert(audio_get_last_volume(audio) == 100);
+    free(r.body);
+
+    /* 3. POST /alert/<id|name> with path segments and optional volume */
+    r = do_request(port, "POST", "/alert/2?volume=75", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"id\":2") != NULL);
+    assert(strstr((char *)r.body, "\"name\":\"chime\"") != NULL);
+    assert(strstr((char *)r.body, "\"volume\":75") != NULL);
+    assert(audio_get_last_alert_id(audio) == 2);
+    assert(audio_get_last_volume(audio) == 75);
+    free(r.body);
+
+    const char *vol_body = "{\"volume\":40}";
+    r = do_request(port, "POST", "/alert/bell", "application/json", vol_body, strlen(vol_body));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"id\":3") != NULL);
+    assert(strstr((char *)r.body, "\"name\":\"bell\"") != NULL);
+    assert(strstr((char *)r.body, "\"volume\":40") != NULL);
+    assert(audio_get_last_alert_id(audio) == 3);
+    assert(audio_get_last_volume(audio) == 40);
+    free(r.body);
+
+    /* 4. POST /alert via query, JSON body, and plain text body */
+    r = do_request(port, "POST", "/alert?sound=chime&volume=60", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(audio_get_last_alert_id(audio) == 2 && audio_get_last_volume(audio) == 60);
+    free(r.body);
+
+    const char *json_req = "{\"sound\":\"bell\",\"volume\":85}";
+    r = do_request(port, "POST", "/alert", "application/json", json_req, strlen(json_req));
+    assert(r.status == 200);
+    assert(audio_get_last_alert_id(audio) == 3 && audio_get_last_volume(audio) == 85);
+    free(r.body);
+
+    const char *json_num = "{\"id\":1}";
+    r = do_request(port, "POST", "/alert", "application/json", json_num, strlen(json_num));
+    assert(r.status == 200);
+    assert(audio_get_last_alert_id(audio) == 1 && audio_get_last_volume(audio) == 100);
+    free(r.body);
+
+    const char *plain = "chime\n";
+    r = do_request(port, "POST", "/alert", "text/plain", plain, strlen(plain));
+    assert(r.status == 200);
+    assert(audio_get_last_alert_id(audio) == 2);
+    free(r.body);
+
+    /* Alerts must NOT stop the demo or increment frames_received */
+    assert(display_is_demo_active(&disp));
+    assert(display_get_frames_received(&disp) == 0);
+    assert(audio_get_trigger_count(audio) == 7);
+
+    /* 5. Error handling: 404 unknown path sound, 400 invalid query/body/volume, 405 wrong method */
+    r = do_request(port, "POST", "/alert/99", NULL, NULL, 0);
+    assert(r.status == 404);
+    free(r.body);
+
+    r = do_request(port, "POST", "/alert/siren", NULL, NULL, 0);
+    assert(r.status == 404);
+    free(r.body);
+
+    r = do_request(port, "POST", "/alert?sound=99", NULL, NULL, 0);
+    assert(r.status == 400);
+    free(r.body);
+
+    r = do_request(port, "POST", "/alert?volume=150", NULL, NULL, 0);
+    assert(r.status == 400);
+    free(r.body);
+
+    r = do_request(port, "POST", "/alert/1?volume=-1", NULL, NULL, 0);
+    assert(r.status == 400);
+    free(r.body);
+
+    r = do_request(port, "POST", "/alert", "text/plain", "nope", 4);
+    assert(r.status == 400);
+    free(r.body);
+
+    const char *get_alert1 = "GET /alert/1 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+    char *raw = raw_exchange(port, get_alert1, strlen(get_alert1));
+    assert(strncmp(raw, "HTTP/1.1 405", 12) == 0);
+    assert(strstr(raw, "\r\nAllow: POST, OPTIONS\r\n") != NULL);
+    free(raw);
+
+    const char *del_alert = "DELETE /alert HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+    raw = raw_exchange(port, del_alert, strlen(del_alert));
+    assert(strncmp(raw, "HTTP/1.1 405", 12) == 0);
+    assert(strstr(raw, "\r\nAllow: GET, POST, OPTIONS\r\n") != NULL);
+    free(raw);
+
+    /* Failed requests did not increment trigger_count */
+    assert(audio_get_trigger_count(audio) == 7);
+
+    server_stop(srv);
+    audio_destroy(audio);
+    display_destroy(&disp);
+    printf("[PASS] /alert HTTP API (GET list, POST /alert/<id|name>, query/JSON/text, volume, 400/404/405)\n");
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     SetTraceLogLevel(LOG_ERROR);
@@ -839,6 +1046,8 @@ int main(void) {
     test_monochrome_filter();
     test_color_formats();
     test_audit_fixes();
+    test_alert_audio_synthesis();
+    test_alert_http_api();
 
     printf("\nAll markee tests passed!\n");
     return 0;

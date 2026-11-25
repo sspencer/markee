@@ -36,6 +36,9 @@ markee runs a small HTTP/1.1 server alongside the simulated display. Anything th
   - [POST /monochrome](#post-monochrome)
   - [DELETE /monochrome](#delete-monochrome)
   - [POST /demo](#post-demo)
+- [Alert sounds](#alert-sounds)
+  - [GET /alert](#get-alert)
+  - [POST /alert, POST /alert/&lt;id|name&gt;](#post-alert-post-alertidname)
 - [Recipes](#recipes)
 - [Known limitations](#known-limitations)
 
@@ -130,7 +133,7 @@ Knowing what each call changes explains most of the API's behavior:
 - **Monochrome filter** is applied when pixels are **read**: by the GUI, `GET /frame` and `GET /pixel`. Stored pixels keep full color, so turning the filter off brings the original colors back.
 - **Demo animation** redraws the framebuffer 60 times per second while it is active. markee starts with the demo on unless you pass `--blank`.
 
-Brightness, monochrome and demo changes do not count as writes and do not change `frames_received`.
+Brightness, monochrome, demo and alert changes do not count as writes and do not change `frames_received`.
 
 ---
 
@@ -153,6 +156,8 @@ Brightness, monochrome and demo changes do not count as writes and do not change
 | `POST` `PUT` | `/monochrome` (`/mono`) | Turn the monochrome filter on or off |
 | `DELETE` | `/monochrome` (`/mono`) | Turn the monochrome filter off |
 | `POST` | `/demo` | Turn the startup animation on or off |
+| `GET` | `/alert` (`/alerts`, `/api/alert`, `/api/alerts`) | List built-in alert sounds and audio status |
+| `POST` | `/alert`, `/alert/<id\|name>` (`/api/alert`) | Play one of the 3 built-in gentle alert sounds |
 | `OPTIONS` | any | CORS preflight (`204`) |
 
 ---
@@ -181,7 +186,9 @@ curl http://127.0.0.1:8080/info
   "brightness": 100,
   "monochrome": null,
   "demo_active": true,
-  "frames_received": 0
+  "frames_received": 0,
+  "audio_ready": true,
+  "alert_sounds": 3
 }
 ```
 
@@ -197,6 +204,8 @@ curl http://127.0.0.1:8080/info
 | `monochrome` | string \| null | Filter color as `"#rrggbb"`, or `null` when the filter is off |
 | `demo_active` | bool | Whether the startup animation is running |
 | `frames_received` | int | Count of successful framebuffer writes since startup |
+| `audio_ready` | bool | Whether an audio output device is ready to play alert sounds |
+| `alert_sounds` | int | Number of built-in alert sounds (`3`) |
 
 ---
 
@@ -626,6 +635,83 @@ curl -X POST "http://127.0.0.1:8080/demo?enabled=0"
 ```
 
 Any framebuffer write also turns the demo off.
+
+---
+
+## Alert sounds
+
+markee includes 3 gentle, procedurally synthesized notification sounds designed to catch attention without being startling:
+
+| ID | Name | Character | Duration |
+|---|---|---|---|
+| `1` | `ding` | Warm single desk-bell ding (G5) | 650 ms |
+| `2` | `chime` | Gentle two-note ascending chime (C5 → G5) | 850 ms |
+| `3` | `bell` | Soft three-note sparkling bell triad (D5 → F#5 → A5) | 1050 ms |
+
+Playing an alert does not change the framebuffer, demo, scrolling text, or `frames_received`. Up to 4 overlapping instances per sound can ring out simultaneously.
+
+### GET /alert
+
+Aliases: `GET /alerts`, `GET /api/alert`, `GET /api/alerts`
+
+Returns audio playback readiness, total alert count, and the catalog of built-in sounds.
+
+```bash
+curl http://127.0.0.1:8080/alert
+```
+
+```json
+{
+  "audio_ready": true,
+  "alerts_played": 2,
+  "sounds": [
+    {"id":1,"name":"ding","description":"Warm single desk-bell ding","duration_ms":650},
+    {"id":2,"name":"chime","description":"Gentle two-note ascending chime","duration_ms":850},
+    {"id":3,"name":"bell","description":"Soft three-note sparkling bell triad","duration_ms":1050}
+  ]
+}
+```
+
+### POST /alert, POST /alert/<id|name>
+
+Aliases: `POST /api/alert`, `POST /api/alert/<id|name>`
+
+Plays one of the 3 built-in alert sounds. You can address the sound directly in the path (`/alert/1`, `/alert/2`, `/alert/3`, or `/alert/ding`, `/alert/chime`, `/alert/bell`) or pass it to `POST /alert`.
+
+On `POST /alert`, the sound comes from the first of these that is present (defaulting to `1` / `ding` if omitted):
+
+| # | Source | Example |
+|---|---|---|
+| 1 | Query `sound` or `id` | `?sound=2`, `?sound=chime`, `?id=3` |
+| 2 | JSON object `"sound"` or `"id"` | `{"sound":2}`, `{"sound":"bell"}` |
+| 3 | JSON number or string | `2`, `"chime"` |
+| 4 | Plain-text body | `2`, `chime` |
+
+An optional **`volume`** (`0–100`, default `100`) can be passed via `?volume=75` or JSON `{"volume":75}` on either `/alert` or `/alert/<id|name>`.
+
+```bash
+# By path (ID or friendly name)
+curl -X POST http://127.0.0.1:8080/alert/1
+curl -X POST http://127.0.0.1:8080/alert/chime
+curl -X POST "http://127.0.0.1:8080/alert/bell?volume=70"
+
+# Default sound (ding) or parameter-based selection
+curl -X POST http://127.0.0.1:8080/alert
+curl -X POST "http://127.0.0.1:8080/alert?sound=2&volume=80"
+curl -X POST http://127.0.0.1:8080/alert -d '{"sound":"bell","volume":60}'
+```
+
+```json
+{"ok":true,"id":2,"name":"chime","volume":80,"played":true}
+```
+
+`"played"` is `false` when markee was started with `--mute` or when no audio output device is available.
+
+| Error | Cause |
+|---|---|
+| `404 Not Found` | Unknown sound in path (`/alert/99`, `/alert/siren`) |
+| `400 Bad Request` | Invalid `sound`/`id` query or body, or `volume` outside `0..100` |
+| `405 Method Not Allowed` | Unsupported HTTP method (e.g. `GET /alert/1` or `DELETE /alert`) |
 
 ---
 

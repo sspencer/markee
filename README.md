@@ -21,6 +21,7 @@ markee is an independent hobby project. It is **not** an emulator for the BUSY B
   - Download the displayed pixels as a **72×16 PNG** via `GET /frame`
   - Stream **raw 24-bit RGB** (`3456` bytes) at 60 FPS over persistent HTTP Keep-Alive connections
   - Draw shapes and bitmap text, including scrolling tickers, with one atomic `POST /draw` JSON batch
+  - Play 3 gentle, procedurally synthesized alert sounds (`ding`, `chime`, `bell`) via `POST /alert`
   - Set/read individual pixels, solid fills, clear, brightness (`0–100%`) and a monochrome tint filter
 - **Custom resolutions** from 1×1 to 1024×1024 via `--resolution`
 
@@ -95,6 +96,7 @@ The Makefile finds raylib with `pkg-config`. If that fails, it falls back to Hom
 | `-p, --port <port>` | TCP port. `0` picks a free port, which is printed at startup. Overrides `MARKEE_PORT`. A value that isn't a whole number from 0 to 65535 (in either place) is an error. | `8080`, or `$MARKEE_PORT` |
 | `--dpi <value>` | Set the monitor's logical DPI by hand for physical sizing (use when EDID detection is wrong) | Auto-detected (falls back to 110) |
 | `--blank` | Start with a blank black screen instead of the startup demo | Off |
+| `--mute` | Disable alert sound playback (`--no-audio` is an alias) | Off |
 | `--headless` | Run only the API server, with no window. The demo and scrolling text still animate at 60 Hz, so `GET /frame` works. | Off |
 | `-h, --help` | Print usage information and exit | — |
 
@@ -120,6 +122,7 @@ Stop it with `Ctrl+C` (SIGINT), SIGTERM, `Q`/`ESC`, or by closing the window.
 
 | Key | Action |
 |---|---|
+| `1` / `2` / `3` | Preview the 3 built-in alert sounds (`ding`, `chime`, `bell`) |
 | `C` | Clear display to black |
 | `D` | Toggle built-in startup animation |
 | `M` | Toggle the monochrome filter (uses the last filter color, or amber `#ffbf00` if none was set) |
@@ -146,6 +149,7 @@ Stop it with `Ctrl+C` (SIGINT), SIGTERM, `Q`/`ESC`, or by closing the window.
 | `GET` `POST` | [`/brightness`](docs/API.md#post-brightness) | Simulated LED brightness `0–100` (GUI only; readback is unaffected) |
 | `GET` `POST` `DELETE` | [`/monochrome`](docs/API.md#post-monochrome) | Single-color tint filter that leaves stored colors unchanged |
 | `POST` | [`/demo`](docs/API.md#post-demo) | Turn the startup animation on or off |
+| `GET` `POST` | [`/alert`](docs/API.md#alert-sounds) | List or play the 3 gentle alert sounds (`POST /alert/1`..`3` or `ding`/`chime`/`bell`) |
 
 ### Quick examples
 
@@ -178,8 +182,9 @@ curl -X POST http://127.0.0.1:8080/draw -d '[
 curl -X POST http://127.0.0.1:8080/monochrome -d amber
 curl -X DELETE http://127.0.0.1:8080/monochrome
 
-# Brightness 60%, then check status
+# Brightness 60%, play a gentle chime, then check status
 curl -X POST "http://127.0.0.1:8080/brightness?value=60"
+curl -X POST http://127.0.0.1:8080/alert/chime
 curl http://127.0.0.1:8080/info
 ```
 
@@ -231,6 +236,7 @@ markee/
 ├── docs/
 │   └── API.md           # Full HTTP API reference
 ├── include/
+│   ├── audio.h          # Procedural alert sound synthesis (ding/chime/bell) and playback queue
 │   ├── config.h         # Hardware specs and limits (72x16, 6.35", 60 Hz, ports, body/header limits)
 │   ├── display.h        # Thread-safe 24-bit framebuffer, PNG I/O, brightness/monochrome/demo state
 │   ├── draw.h           # Color parsing, bitmap fonts, /draw JSON op executor
@@ -239,6 +245,7 @@ markee/
 │   └── server.h         # Embedded POSIX TCP/HTTP server
 ├── src/
 │   ├── main.c           # CLI parsing, lifecycle, 60 Hz main loop, hotkeys
+│   ├── audio.c          # Additive bell/chime synthesis and polyphonic raylib playback
 │   ├── display.c        # Framebuffer, PNG encode/decode, BT.709 monochrome filter, demo and scroll animation
 │   ├── draw.c           # Shape rasterizers (line/rect/oval/polygon), 5x7 and 3x5 fonts, atomic /draw
 │   ├── json.c           # Recursive-descent JSON parser

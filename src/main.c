@@ -10,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "audio.h"
 #include "config.h"
 #include "display.h"
 #include "draw.h"
@@ -103,9 +104,11 @@ static void print_usage(const char *prog) {
            "  -p, --port <port>       TCP port to listen on (default: %d, or MARKEE_PORT)\n"
            "      --dpi <value>       Override monitor logical DPI for physical sizing\n"
            "      --blank             Start with a blank display instead of the startup demo\n"
+           "      --mute              Disable alert sound playback (alias: --no-audio)\n"
            "      --headless          Run API server only without opening a GUI window\n"
            "  -h, --help              Show this help message and exit\n\n"
            "Keyboard shortcuts (GUI mode):\n"
+           "  1 / 2 / 3               Preview alert sounds (ding, chime, bell)\n"
            "  C                       Clear display\n"
            "  D                       Toggle startup demo animation\n"
            "  M                       Toggle monochrome filter on/off (default amber #ffbf00)\n"
@@ -160,6 +163,7 @@ int main(int argc, char **argv) {
     uint16_t port = MARKEE_DEFAULT_PORT;
     float override_dpi = 0.0f;
     bool start_demo = true;
+    bool mute = false;
     bool headless = false;
 
     const char *env_port = getenv("MARKEE_PORT");
@@ -213,6 +217,8 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--blank") == 0) {
             start_demo = false;
+        } else if (strcmp(argv[i], "--mute") == 0 || strcmp(argv[i], "--no-audio") == 0) {
+            mute = true;
         } else if (strcmp(argv[i], "--headless") == 0) {
             headless = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -232,6 +238,8 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
+    SetTraceLogLevel(LOG_WARNING);
+
     MarkeeDisplay display;
     if (!display_init(&display, width, height, start_demo)) {
         fprintf(stderr, "Failed to initialize %dx%d display state\n", width, height);
@@ -241,9 +249,17 @@ int main(int argc, char **argv) {
         display_set_monochrome(&display, true, mono_color.r, mono_color.g, mono_color.b);
     }
 
-    MarkeeServer *srv = server_start(&display, host, port);
+    MarkeeAudio *audio = audio_create(!mute);
+    if (!audio) {
+        fprintf(stderr, "Failed to initialize audio state\n");
+        display_destroy(&display);
+        return 1;
+    }
+
+    MarkeeServer *srv = server_start_ex(&display, audio, host, port);
     if (!srv) {
         fprintf(stderr, "Failed to start API server on %s:%u\n", host, (unsigned)port);
+        audio_destroy(audio);
         display_destroy(&display);
         return 1;
     }
@@ -269,6 +285,7 @@ int main(int argc, char **argv) {
     printf("  GET  /frame   Download displayed %dx%d pixels as PNG (?format=raw for RGB24)\n",
            width, height);
     printf("  POST /draw    Draw JSON shapes/text (line, rect, oval, polygon, text)\n");
+    printf("  POST /alert   Play alert sound (/alert/1..3 or ding, chime, bell; GET /alert to list)\n");
     printf("  GET  /info    Device status & capabilities\n");
     fflush(stdout);
 
@@ -277,6 +294,7 @@ int main(int argc, char **argv) {
         double t = 0.0;
         while (!atomic_load(&g_quit)) {
             display_tick(&display, t);
+            audio_tick(audio);
             nanosleep(&ts, NULL);
             t += 1.0 / (double)MARKEE_REFRESH_HZ;
         }
@@ -285,6 +303,7 @@ int main(int argc, char **argv) {
         if (!frame_buf) {
             fprintf(stderr, "Failed to allocate render buffer\n");
             server_stop(srv);
+            audio_destroy(audio);
             display_destroy(&display);
             return 1;
         }
@@ -294,6 +313,15 @@ int main(int argc, char **argv) {
 
         while (!WindowShouldClose() && !atomic_load(&g_quit)) {
             if (IsKeyPressed(KEY_Q)) break;
+            if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1)) {
+                audio_trigger(audio, 1, 100);
+            }
+            if (IsKeyPressed(KEY_TWO) || IsKeyPressed(KEY_KP_2)) {
+                audio_trigger(audio, 2, 100);
+            }
+            if (IsKeyPressed(KEY_THREE) || IsKeyPressed(KEY_KP_3)) {
+                audio_trigger(audio, 3, 100);
+            }
             if (IsKeyPressed(KEY_C)) {
                 display_clear(&display, true);
             }
@@ -333,6 +361,7 @@ int main(int argc, char **argv) {
             }
 
             display_tick(&display, GetTime());
+            audio_tick(audio);
 
             uint8_t brightness = 100;
             display_snapshot(&display, frame_buf, display.frame_bytes, &brightness);
@@ -347,6 +376,7 @@ int main(int argc, char **argv) {
     }
 
     server_stop(srv);
+    audio_destroy(audio);
     display_destroy(&display);
     return 0;
 }

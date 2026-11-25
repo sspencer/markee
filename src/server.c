@@ -19,12 +19,14 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include "audio.h"
 #include "config.h"
 #include "draw.h"
 #include "json.h"
 
 struct MarkeeServer {
     MarkeeDisplay *disp;
+    MarkeeAudio *audio;
     int listen_fd;
     uint16_t port;
     char host[64];
@@ -533,13 +535,72 @@ static const RouteMethods KNOWN_ROUTES[] = {
     {"/mono",       "GET, POST, PUT, DELETE, OPTIONS"},
     {"/brightness", "GET, POST, PUT, OPTIONS"},
     {"/demo",       "POST, OPTIONS"},
+    {"/alert",      "GET, POST, OPTIONS"},
+    {"/api/alert",  "GET, POST, OPTIONS"},
+    {"/alerts",     "GET, OPTIONS"},
+    {"/api/alerts", "GET, OPTIONS"},
 };
+
+/* If path is "/alert/<seg>" or "/api/alert/<seg>" (single segment), return pointer to <seg>. */
+static const char *alert_path_segment(const char *path) {
+    const char *seg = NULL;
+    if (strncmp(path, "/alert/", 7) == 0) {
+        seg = path + 7;
+    } else if (strncmp(path, "/api/alert/", 11) == 0) {
+        seg = path + 11;
+    }
+    if (!seg || !*seg || strchr(seg, '/') != NULL) return NULL;
+    return seg;
+}
 
 static const char *route_allow(const char *path) {
     for (size_t i = 0; i < sizeof(KNOWN_ROUTES) / sizeof(KNOWN_ROUTES[0]); i++) {
         if (strcmp(path, KNOWN_ROUTES[i].path) == 0) return KNOWN_ROUTES[i].allow;
     }
+    const char *seg = alert_path_segment(path);
+    if (seg && audio_parse_alert_id(seg) > 0) {
+        return "POST, OPTIONS";
+    }
     return NULL;
+}
+
+/* Parse optional volume (0..100) from query ?volume= or JSON object "volume".
+ * Sets *out_vol (defaults to 100 when omitted). Returns false if present but invalid. */
+static bool extract_alert_volume(const HttpRequest *req, const JsonValue *body_json, int *out_vol) {
+    *out_vol = 100;
+    char val[32];
+    if (query_get(req->query, "volume", val, sizeof(val))) {
+        int v = -1;
+        if (!parse_int_param(val, &v) || v < 0 || v > 100) return false;
+        *out_vol = v;
+        return true;
+    }
+    if (body_json && body_json->type == JSON_OBJECT) {
+        const JsonValue *jv = json_obj_get(body_json, "volume");
+        if (jv) {
+            int v = -1;
+            if (!json_member_int(body_json, "volume", &v) || v < 0 || v > 100) return false;
+            *out_vol = v;
+            return true;
+        }
+    }
+    return true;
+}
+
+/* Parse an alert sound ID from a JSON value (integer 1..N or string "1".."N" / name). */
+static int parse_alert_json_value(const JsonValue *v) {
+    if (!v) return 0;
+    if (v->type == JSON_NUMBER) {
+        double d = v->u.nval;
+        if (d == (double)(long)d && d >= 1.0 && d <= (double)MARKEE_ALERT_COUNT) {
+            return (int)d;
+        }
+        return 0;
+    }
+    if (v->type == JSON_STRING) {
+        return audio_parse_alert_id(v->u.sval);
+    }
+    return 0;
 }
 
 static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
@@ -566,7 +627,7 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         } else {
             snprintf(mono_json, sizeof(mono_json), "null");
         }
-        char json[576];
+        char json[640];
         snprintf(json, sizeof(json),
                  "{\"name\":\"markee\","
                  "\"width\":%d,"
@@ -578,13 +639,17 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
                  "\"brightness\":%u,"
                  "\"monochrome\":%s,"
                  "\"demo_active\":%s,"
-                 "\"frames_received\":%llu}",
+                 "\"frames_received\":%llu,"
+                 "\"audio_ready\":%s,"
+                 "\"alert_sounds\":%d}",
                  disp->width, disp->height, disp->frame_bytes,
                  MARKEE_REFRESH_HZ, phys_w_in,
                  (unsigned)display_get_brightness(disp),
                  mono_json,
                  display_is_demo_active(disp) ? "true" : "false",
-                 (unsigned long long)display_get_frames_received(disp));
+                 (unsigned long long)display_get_frames_received(disp),
+                 audio_is_ready(srv->audio) ? "true" : "false",
+                 MARKEE_ALERT_COUNT);
         send_json(fd, 200, "OK", json, ka);
         return;
     }
@@ -977,6 +1042,137 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         return;
     }
 
+    /* GET /alert, /alerts, /api/alert, /api/alerts */
+    if (strcmp(req->method, "GET") == 0 &&
+        (strcmp(req->path, "/alert") == 0 || strcmp(req->path, "/alerts") == 0 ||
+         strcmp(req->path, "/api/alert") == 0 || strcmp(req->path, "/api/alerts") == 0)) {
+        char json[1024];
+        int off = snprintf(json, sizeof(json),
+                           "{\"audio_ready\":%s,\"alerts_played\":%llu,\"sounds\":[",
+                           audio_is_ready(srv->audio) ? "true" : "false",
+                           (unsigned long long)audio_get_trigger_count(srv->audio));
+        for (int i = 1; i <= MARKEE_ALERT_COUNT && off > 0 && (size_t)off < sizeof(json); i++) {
+            const MarkeeAlertInfo *info = audio_get_alert_info(i);
+            off += snprintf(json + off, sizeof(json) - (size_t)off,
+                            "%s{\"id\":%d,\"name\":\"%s\",\"description\":\"%s\",\"duration_ms\":%d}",
+                            i > 1 ? "," : "",
+                            info->id, info->name, info->description, info->duration_ms);
+        }
+        if (off > 0 && (size_t)off + 3 < sizeof(json)) {
+            snprintf(json + off, sizeof(json) - (size_t)off, "]}");
+        }
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* POST /alert/<id|name> or POST /api/alert/<id|name> */
+    if (strcmp(req->method, "POST") == 0) {
+        const char *seg = alert_path_segment(req->path);
+        if (seg) {
+            int sound_id = audio_parse_alert_id(seg);
+            if (sound_id <= 0) {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "unknown alert sound '%s' (valid: 1/ding, 2/chime, 3/bell)", seg);
+                send_error(fd, 404, "Not Found", msg, ka);
+                return;
+            }
+            JsonValue *bj = NULL;
+            if (req->body && req->body_len > 0) {
+                const char *s = (const char *)req->body;
+                while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+                if (*s != '\0') {
+                    bj = parse_body_json(req->body, req->body_len);
+                    if (!bj || bj->type != JSON_OBJECT) {
+                        json_free(bj);
+                        send_json(fd, 400, "Bad Request",
+                                  "{\"error\":\"optional body must be a JSON object (e.g. {\\\"volume\\\":80})\"}",
+                                  ka);
+                        return;
+                    }
+                }
+            }
+            int volume = 100;
+            bool vol_ok = extract_alert_volume(req, bj, &volume);
+            json_free(bj);
+            if (!vol_ok) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"volume must be an integer 0..100\"}", ka);
+                return;
+            }
+            const MarkeeAlertInfo *info = audio_get_alert_info(sound_id);
+            bool played = audio_trigger(srv->audio, sound_id, (uint8_t)volume);
+            char json[160];
+            snprintf(json, sizeof(json),
+                     "{\"ok\":true,\"id\":%d,\"name\":\"%s\",\"volume\":%d,\"played\":%s}",
+                     info->id, info->name, volume, played ? "true" : "false");
+            send_json(fd, 200, "OK", json, ka);
+            return;
+        }
+    }
+
+    /* POST /alert or POST /api/alert */
+    if (strcmp(req->method, "POST") == 0 &&
+        (strcmp(req->path, "/alert") == 0 || strcmp(req->path, "/api/alert") == 0)) {
+        int sound_id = 1; /* default: 1 (ding) */
+        bool sound_ok = true;
+        char val[64];
+
+        JsonValue *bj = parse_body_json(req->body, req->body_len);
+        int volume = 100;
+        if (!extract_alert_volume(req, bj, &volume)) {
+            json_free(bj);
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"volume must be an integer 0..100\"}", ka);
+            return;
+        }
+
+        if (query_get(req->query, "sound", val, sizeof(val)) ||
+            query_get(req->query, "id", val, sizeof(val))) {
+            sound_id = audio_parse_alert_id(val);
+            sound_ok = (sound_id > 0);
+        } else if (req->body && req->body_len > 0) {
+            const char *s = (const char *)req->body;
+            while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+            if (*s != '\0') {
+                if (bj) {
+                    if (bj->type == JSON_OBJECT) {
+                        const JsonValue *js = json_obj_get(bj, "sound");
+                        if (!js) js = json_obj_get(bj, "id");
+                        if (js) {
+                            sound_id = parse_alert_json_value(js);
+                            sound_ok = (sound_id > 0);
+                        }
+                    } else if (bj->type == JSON_NUMBER || bj->type == JSON_STRING) {
+                        sound_id = parse_alert_json_value(bj);
+                        sound_ok = (sound_id > 0);
+                    } else {
+                        sound_ok = false;
+                    }
+                } else {
+                    sound_id = audio_parse_alert_id(s);
+                    sound_ok = (sound_id > 0);
+                }
+            }
+        }
+        json_free(bj);
+
+        if (!sound_ok) {
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"sound must be 1..3 or one of: ding, chime, bell\"}", ka);
+            return;
+        }
+
+        const MarkeeAlertInfo *info = audio_get_alert_info(sound_id);
+        bool played = audio_trigger(srv->audio, sound_id, (uint8_t)volume);
+        char json[160];
+        snprintf(json, sizeof(json),
+                 "{\"ok\":true,\"id\":%d,\"name\":\"%s\",\"volume\":%d,\"played\":%s}",
+                 info->id, info->name, volume, played ? "true" : "false");
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
     const char *allow = route_allow(req->path);
     if (allow) {
         char hdr[128];
@@ -1092,7 +1288,8 @@ static void *accept_thread_main(void *arg) {
     return NULL;
 }
 
-MarkeeServer *server_start(MarkeeDisplay *disp, const char *host, uint16_t port) {
+MarkeeServer *server_start_ex(MarkeeDisplay *disp, MarkeeAudio *audio,
+                              const char *host, uint16_t port) {
     if (!disp) return NULL;
     if (!host || !*host) host = MARKEE_DEFAULT_HOST;
 
@@ -1152,6 +1349,7 @@ MarkeeServer *server_start(MarkeeDisplay *disp, const char *host, uint16_t port)
     }
 
     srv->disp = disp;
+    srv->audio = audio;
     srv->listen_fd = fd;
     srv->port = port;
     snprintf(srv->host, sizeof(srv->host), "%s", host);
@@ -1166,6 +1364,10 @@ MarkeeServer *server_start(MarkeeDisplay *disp, const char *host, uint16_t port)
     }
 
     return srv;
+}
+
+MarkeeServer *server_start(MarkeeDisplay *disp, const char *host, uint16_t port) {
+    return server_start_ex(disp, NULL, host, port);
 }
 
 uint16_t server_get_port(const MarkeeServer *srv) {
