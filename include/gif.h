@@ -44,6 +44,19 @@ bool gif_has_magic(const uint8_t *data, size_t len);
  * On success, returns true and stores a heap-allocated MarkeeGif in *out_gif
  * (caller frees with gif_free()). On failure, returns false and writes a
  * human-readable reason into err_buf (if non-NULL). */
+typedef enum {
+    MARKEE_GIF_FIT_CROP = 0,   /* Center-crop if larger, center if smaller (default) */
+    MARKEE_GIF_FIT_CONTAIN,    /* Scale preserving aspect ratio to fit inside display */
+    MARKEE_GIF_FIT_STRETCH     /* Scale to fill exact display dimensions */
+} MarkeeGifFitMode;
+
+bool gif_parse_fit_mode(const char *s, MarkeeGifFitMode *out);
+
+bool gif_decode_fit(const uint8_t *data, size_t len, int dst_w, int dst_h,
+                    MarkeeGifFitMode fit,
+                    uint8_t bg_r, uint8_t bg_g, uint8_t bg_b,
+                    MarkeeGif **out_gif, char *err_buf, size_t err_size);
+
 bool gif_decode_ex(const uint8_t *data, size_t len, int dst_w, int dst_h,
                    uint8_t bg_r, uint8_t bg_g, uint8_t bg_b,
                    MarkeeGif **out_gif, char *err_buf, size_t err_size);

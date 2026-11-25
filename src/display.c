@@ -89,6 +89,8 @@ void display_stop_gif_unlocked(MarkeeDisplay *disp) {
     memset(disp->gif.layers, 0, sizeof(disp->gif.layers));
     disp->gif.count = 0;
     disp->gif.active = false;
+    disp->gif.paused = false;
+    disp->gif.speed = 1.0;
     disp->gif.has_last_time = false;
     disp->gif.last_time = 0.0;
 }
@@ -936,11 +938,11 @@ void display_free_buffer(uint8_t *buf) {
     }
 }
 
-MarkeeResult display_load_gif(MarkeeDisplay *disp, const uint8_t *gif_data, size_t gif_len,
-                              int loop_override,
-                              uint8_t fill_r, uint8_t fill_g, uint8_t fill_b,
-                              MarkeeGifStatus *out_status,
-                              char *err_buf, size_t err_size) {
+MarkeeResult display_load_gif_ex(MarkeeDisplay *disp, const uint8_t *gif_data, size_t gif_len,
+                                 int loop_override, MarkeeGifFitMode fit, double speed,
+                                 uint8_t fill_r, uint8_t fill_g, uint8_t fill_b,
+                                 MarkeeGifStatus *out_status,
+                                 char *err_buf, size_t err_size) {
     if (out_status) memset(out_status, 0, sizeof(*out_status));
     if (err_buf && err_size > 0) err_buf[0] = '\0';
 
@@ -950,9 +952,12 @@ MarkeeResult display_load_gif(MarkeeDisplay *disp, const uint8_t *gif_data, size
         return MARKEE_ERR_INVALID_GIF;
     }
 
+    if (speed < 0.1) speed = 0.1;
+    if (speed > 10.0) speed = 10.0;
+
     MarkeeGif *gif = NULL;
-    if (!gif_decode_ex(gif_data, gif_len, disp->width, disp->height,
-                       fill_r, fill_g, fill_b, &gif, err_buf, err_size)) {
+    if (!gif_decode_fit(gif_data, gif_len, disp->width, disp->height, fit,
+                        fill_r, fill_g, fill_b, &gif, err_buf, err_size)) {
         return MARKEE_ERR_INVALID_GIF;
     }
 
@@ -963,6 +968,8 @@ MarkeeResult display_load_gif(MarkeeDisplay *disp, const uint8_t *gif_data, size
     MarkeeGifStatus status;
     memset(&status, 0, sizeof(status));
     status.active = (gif->frame_count > 1);
+    status.paused = false;
+    status.speed = speed;
     status.src_width = gif->src_width;
     status.src_height = gif->src_height;
     status.frame_count = gif->frame_count;
@@ -995,6 +1002,8 @@ MarkeeResult display_load_gif(MarkeeDisplay *disp, const uint8_t *gif_data, size
         disp->gif.layers[0].accum_ms = 0.0;
         disp->gif.count = 1;
         disp->gif.active = true;
+        disp->gif.paused = false;
+        disp->gif.speed = speed;
         disp->gif.has_last_time = false;
         disp->gif.last_time = 0.0;
     } else {
@@ -1009,6 +1018,33 @@ MarkeeResult display_load_gif(MarkeeDisplay *disp, const uint8_t *gif_data, size
 
     if (out_status) *out_status = status;
     return MARKEE_OK;
+}
+
+MarkeeResult display_load_gif(MarkeeDisplay *disp, const uint8_t *gif_data, size_t gif_len,
+                              int loop_override,
+                              uint8_t fill_r, uint8_t fill_g, uint8_t fill_b,
+                              MarkeeGifStatus *out_status,
+                              char *err_buf, size_t err_size) {
+    return display_load_gif_ex(disp, gif_data, gif_len, loop_override,
+                               MARKEE_GIF_FIT_CROP, 1.0,
+                               fill_r, fill_g, fill_b, out_status, err_buf, err_size);
+}
+
+void display_set_gif_paused(MarkeeDisplay *disp, bool paused) {
+    if (!disp) return;
+    pthread_mutex_lock(&disp->lock);
+    disp->gif.paused = paused;
+    disp->gif.has_last_time = false;
+    pthread_mutex_unlock(&disp->lock);
+}
+
+void display_set_gif_speed(MarkeeDisplay *disp, double speed) {
+    if (!disp) return;
+    if (speed < 0.1) speed = 0.1;
+    if (speed > 10.0) speed = 10.0;
+    pthread_mutex_lock(&disp->lock);
+    disp->gif.speed = speed;
+    pthread_mutex_unlock(&disp->lock);
 }
 
 bool display_get_gif_status(MarkeeDisplay *disp, MarkeeGifStatus *out_status) {
@@ -1026,6 +1062,8 @@ bool display_get_gif_status(MarkeeDisplay *disp, MarkeeGifStatus *out_status) {
         }
         const MarkeeGifLayer *L = &disp->gif.layers[idx];
         out_status->active = true;
+        out_status->paused = disp->gif.paused;
+        out_status->speed = disp->gif.speed > 0.0 ? disp->gif.speed : 1.0;
         out_status->src_width = L->gif->src_width;
         out_status->src_height = L->gif->src_height;
         out_status->frame_count = L->gif->frame_count;
@@ -1189,12 +1227,13 @@ static void tick_animations(MarkeeDisplay *disp, double time_sec) {
     bool gif_changed = false;
     bool all_gifs_done = false;
 
-    if (gif_active) {
+    if (gif_active && !disp->gif.paused) {
         if (!disp->gif.has_last_time) {
             disp->gif.last_time = time_sec;
             disp->gif.has_last_time = true;
         } else {
-            double dt_ms = (time_sec - disp->gif.last_time) * 1000.0;
+            double spd = disp->gif.speed > 0.0 ? disp->gif.speed : 1.0;
+            double dt_ms = (time_sec - disp->gif.last_time) * 1000.0 * spd;
             disp->gif.last_time = time_sec;
             if (dt_ms > 0.0) {
                 size_t still_running = 0;

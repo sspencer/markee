@@ -79,6 +79,8 @@ typedef struct {
 
 typedef struct {
     bool active;
+    bool paused;
+    double speed;
     size_t count;
     MarkeeGifLayer layers[MARKEE_MAX_GIF_LAYERS];
     bool has_last_time;
@@ -88,6 +90,8 @@ typedef struct {
 
 typedef struct {
     bool active;
+    bool paused;
+    double speed;
     int src_width;
     int src_height;
     size_t frame_count;
@@ -223,6 +227,13 @@ MarkeeResult display_load_gif(MarkeeDisplay *disp, const uint8_t *gif_data, size
                               uint8_t fill_r, uint8_t fill_g, uint8_t fill_b,
                               MarkeeGifStatus *out_status,
                               char *err_buf, size_t err_size);
+MarkeeResult display_load_gif_ex(MarkeeDisplay *disp, const uint8_t *gif_data, size_t gif_len,
+                                 int loop_override, MarkeeGifFitMode fit, double speed,
+                                 uint8_t fill_r, uint8_t fill_g, uint8_t fill_b,
+                                 MarkeeGifStatus *out_status,
+                                 char *err_buf, size_t err_size);
+void display_set_gif_paused(MarkeeDisplay *disp, bool paused);
+void display_set_gif_speed(MarkeeDisplay *disp, double speed);
 void display_stop_gif(MarkeeDisplay *disp);
 void display_stop_gif_unlocked(MarkeeDisplay *disp);
 bool display_get_gif_status(MarkeeDisplay *disp, MarkeeGifStatus *out_status);

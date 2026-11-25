@@ -24,7 +24,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
   - Server-side live `clock` and `countdown` timer ops (with optional bottom progress bar and completion alert sound) tick autonomously at 60 Hz.
   - Compact `progress` bar and `sparkline` primitives for dashboards.
 - [x] **Scene transitions (`transition: "fade"|"slide-left"|"slide-up"|"wipe"`):** Supported via `?transition=<type>&transition_ms=<50..5000>` on `POST /draw` for smooth 60 Hz crossfades, slides, and wipes.
-- [ ] **Animation playback controls:** Speed multiplier (`?speed=1.5` / `"speed"` on animated GIFs), pause/resume endpoint, and optional scaling modes (`?fit=crop|contain|stretch`) on `/animate`.
+- [x] **Animation playback controls:** Speed multiplier (`?speed=0.1..10.0`, `POST /animate/speed`), `POST /animate/pause` & `POST /animate/resume`, and scaling modes (`?fit=crop|contain|stretch`) on `/animate`.
 - [ ] **Built-in monochrome pixel icon set:** Small named icons (`check`, `cross`, `bell`, `wifi`, `flame`, `play`, `pause`, `battery`, etc.) usable directly in `/draw` without shipping base64 payloads for common glyphs.
 - [ ] **Shape alpha / gradients:** Optional `"alpha"` (`0.0..1.0`) on shapes/fills and simple linear gradients.
 

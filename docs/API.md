@@ -594,6 +594,13 @@ Decodes a GIF87a or GIF89a image (animated or static) and plays it on the LED ma
 **Optional query parameters:**
 - `?fill=<color>` — background color displayed beneath transparent GIF pixels and centered margins (accepts any [color string](#color-formats) such as `white`, `0x202028`, `e0e0e0`, `amber`; defaults to black `#000000`).
 - `?loop=<n>` — override loop count (`0` = loop forever, `1` = play once and hold last frame, `N` = play `N` times). If omitted, honors the GIF's `NETSCAPE2.0` loop count (multi-frame GIFs without `NETSCAPE2.0` loop infinitely).
+- `?fit=<crop|contain|stretch>` — sizing mode (`crop` default center-crops/centers; `contain` scales preserving aspect ratio to fit inside the display; `stretch` fills exact display dimensions).
+- `?speed=<0.1..10.0>` — playback speed multiplier (default `1.0`).
+
+**Playback control endpoints:**
+- `POST /animate/pause` — freeze playback on the current frame.
+- `POST /animate/resume` — resume paused playback.
+- `POST /animate/speed?value=<0.1..10.0>` (or JSON `{"speed":2.0}`) — adjust playback speed live.
 
 ```bash
 # Play an animated GIF (use --data-binary so curl does not alter binary bytes)

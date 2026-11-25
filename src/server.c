@@ -526,8 +526,11 @@ static const RouteMethods KNOWN_ROUTES[] = {
     {"/api/frame",  "GET, POST, PUT, DELETE, OPTIONS"},
     {"/frame.png",  "GET, POST, PUT, OPTIONS"},
     {"/frame.rgb",  "GET, POST, PUT, OPTIONS"},
-    {"/animate",     "GET, POST, PUT, DELETE, OPTIONS"},
-    {"/api/animate", "GET, POST, PUT, DELETE, OPTIONS"},
+    {"/animate",        "GET, POST, PUT, DELETE, OPTIONS"},
+    {"/api/animate",    "GET, POST, PUT, DELETE, OPTIONS"},
+    {"/animate/pause",  "POST, OPTIONS"},
+    {"/animate/resume", "POST, OPTIONS"},
+    {"/animate/speed",  "POST, PUT, OPTIONS"},
     {"/clear",      "POST, OPTIONS"},
     {"/fill",       "POST, OPTIONS"},
     {"/pixel",      "GET, POST, PUT, OPTIONS"},
@@ -790,18 +793,66 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         return;
     }
 
+    /* POST /animate/pause or /animate/resume */
+    if (strcmp(req->method, "POST") == 0 &&
+        (strcmp(req->path, "/animate/pause") == 0 || strcmp(req->path, "/animate/resume") == 0)) {
+        bool paused = (strcmp(req->path, "/animate/pause") == 0);
+        display_set_gif_paused(disp, paused);
+        char json[96];
+        snprintf(json, sizeof(json), "{\"ok\":true,\"paused\":%s}", paused ? "true" : "false");
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* POST or PUT /animate/speed */
+    if ((strcmp(req->method, "POST") == 0 || strcmp(req->method, "PUT") == 0) &&
+        strcmp(req->path, "/animate/speed") == 0) {
+        double spd = 0.0;
+        bool ok = false;
+        char val[32];
+        if (query_get(req->query, "value", val, sizeof(val)) ||
+            query_get(req->query, "speed", val, sizeof(val))) {
+            char *end = NULL;
+            spd = strtod(val, &end);
+            if (end != val && *end == '\0' && spd >= 0.1 && spd <= 10.0) ok = true;
+        } else if (req->body && req->body_len > 0) {
+            JsonValue *bj = parse_body_json(req->body, req->body_len);
+            if (bj && bj->type == JSON_NUMBER) {
+                spd = bj->u.nval;
+                if (spd >= 0.1 && spd <= 10.0) ok = true;
+            } else if (bj && bj->type == JSON_OBJECT) {
+                const JsonValue *jv = json_obj_get(bj, "speed");
+                if (!jv) jv = json_obj_get(bj, "value");
+                if (jv && json_as_double(jv, &spd) && spd >= 0.1 && spd <= 10.0) ok = true;
+            }
+            json_free(bj);
+        }
+        if (!ok) {
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"speed must be a number in 0.1..10.0\"}", ka);
+            return;
+        }
+        display_set_gif_speed(disp, spd);
+        char json[96];
+        snprintf(json, sizeof(json), "{\"ok\":true,\"speed\":%.2f}", spd);
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
     /* GET /animate or /api/animate */
     if (strcmp(req->method, "GET") == 0 &&
         (strcmp(req->path, "/animate") == 0 || strcmp(req->path, "/api/animate") == 0)) {
         MarkeeGifStatus st;
         if (display_get_gif_status(disp, &st)) {
-            char json[320];
+            char json[360];
             snprintf(json, sizeof(json),
-                     "{\"active\":true,\"width\":%d,\"height\":%d,"
+                     "{\"active\":true,\"paused\":%s,\"speed\":%.2f,"
+                     "\"width\":%d,\"height\":%d,"
                      "\"source_width\":%d,\"source_height\":%d,"
                      "\"frames\":%zu,\"current_frame\":%zu,"
                      "\"duration_ms\":%llu,\"loop\":%d,"
                      "\"fill\":\"#%02x%02x%02x\"}",
+                     st.paused ? "true" : "false", st.speed,
                      disp->width, disp->height,
                      st.src_width, st.src_height,
                      st.frame_count, st.current_frame,
@@ -845,6 +896,29 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
             loop_override = lv;
         }
 
+        MarkeeGifFitMode fit = MARKEE_GIF_FIT_CROP;
+        char fit_val[32];
+        if (query_get(req->query, "fit", fit_val, sizeof(fit_val))) {
+            if (!gif_parse_fit_mode(fit_val, &fit)) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"fit must be 'crop', 'contain', or 'stretch'\"}", ka);
+                return;
+            }
+        }
+
+        double speed = 1.0;
+        char spd_val[32];
+        if (query_get(req->query, "speed", spd_val, sizeof(spd_val))) {
+            char *end = NULL;
+            double d = strtod(spd_val, &end);
+            if (end == spd_val || *end != '\0' || d < 0.1 || d > 10.0) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"speed must be a number in 0.1..10.0\"}", ka);
+                return;
+            }
+            speed = d;
+        }
+
         uint8_t fill_r = 0, fill_g = 0, fill_b = 0;
         char fill_val[64];
         if (query_get(req->query, "fill", fill_val, sizeof(fill_val))) {
@@ -858,24 +932,25 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
 
         MarkeeGifStatus st;
         char err[256] = {0};
-        if (display_load_gif(disp, req->body, req->body_len, loop_override,
-                             fill_r, fill_g, fill_b,
-                             &st, err, sizeof(err)) != MARKEE_OK) {
+        if (display_load_gif_ex(disp, req->body, req->body_len, loop_override, fit, speed,
+                                fill_r, fill_g, fill_b,
+                                &st, err, sizeof(err)) != MARKEE_OK) {
             send_error(fd, 400, "Bad Request", err[0] ? err : "invalid GIF data", ka);
             return;
         }
 
-        char json[320];
+        char json[360];
         snprintf(json, sizeof(json),
                  "{\"ok\":true,\"format\":\"gif\",\"width\":%d,\"height\":%d,"
                  "\"source_width\":%d,\"source_height\":%d,"
                  "\"frames\":%zu,\"duration_ms\":%llu,\"loop\":%d,"
-                 "\"fill\":\"#%02x%02x%02x\",\"active\":%s}",
+                 "\"speed\":%.2f,\"fill\":\"#%02x%02x%02x\",\"active\":%s}",
                  disp->width, disp->height,
                  st.src_width, st.src_height,
                  st.frame_count,
                  (unsigned long long)st.total_duration_ms,
                  st.loop_count,
+                 st.speed,
                  st.fill_r, st.fill_g, st.fill_b,
                  st.active ? "true" : "false");
         send_json(fd, 200, "OK", json, ka);

@@ -1649,6 +1649,49 @@ static void test_animate_http_api(void) {
         free(tgif.buf);
     }
 
+    /* 6b. Playback controls: speed=2.0, pause, resume, fit=stretch/contain */
+    {
+        r = do_request(port, "POST", "/animate?fit=stretch&speed=2.0", "image/gif", anim.buf, anim.len);
+        assert(r.status == 200);
+        assert(strstr((char *)r.body, "\"speed\":2.00") != NULL);
+        free(r.body);
+        /* Stretched 12x8 red fills entire 72x16 including corner (0,0) */
+        assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 0 && pb == 0);
+
+        /* Pause freezes frame 0 even after advancing 200 ms */
+        r = do_request(port, "POST", "/animate/pause", NULL, NULL, 0);
+        assert(r.status == 200);
+        free(r.body);
+        display_tick(&disp, 10.0);
+        display_tick(&disp, 10.2);
+        assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 0 && pb == 0);
+
+        /* Resume at 2x speed: 30 ms elapsed -> 60 ms effective >= 50 ms frame 0 -> frame 1 (green) */
+        r = do_request(port, "POST", "/animate/resume", NULL, NULL, 0);
+        assert(r.status == 200);
+        free(r.body);
+        display_tick(&disp, 11.000);
+        display_tick(&disp, 11.030);
+        assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 255 && pb == 0);
+
+        /* Live speed change via /animate/speed */
+        r = do_request(port, "POST", "/animate/speed?value=0.5", NULL, NULL, 0);
+        assert(r.status == 200);
+        free(r.body);
+
+        /* Contain fit scales 12x8 to 24x16 centered at x=24..47 -> (0,0) black, (24,0) red */
+        r = do_request(port, "POST", "/animate?fit=contain", "image/gif", anim.buf, anim.len);
+        assert(r.status == 200);
+        free(r.body);
+        assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 0 && pb == 0);
+        assert(display_get_pixel(&disp, 24, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 0 && pb == 0);
+    }
+
     /* 7. Other framebuffer writes (/draw, /clear) automatically stop an active animation */
     r = do_request(port, "POST", "/animate", "image/gif", anim.buf, anim.len);
     assert(r.status == 200);

@@ -5,8 +5,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "config.h"
+
+bool gif_parse_fit_mode(const char *s, MarkeeGifFitMode *out) {
+    if (!s || !*s || !out) return false;
+    if (strcasecmp(s, "crop") == 0 || strcasecmp(s, "center") == 0) {
+        *out = MARKEE_GIF_FIT_CROP;
+        return true;
+    }
+    if (strcasecmp(s, "contain") == 0 || strcasecmp(s, "fit") == 0) {
+        *out = MARKEE_GIF_FIT_CONTAIN;
+        return true;
+    }
+    if (strcasecmp(s, "stretch") == 0 || strcasecmp(s, "fill") == 0) {
+        *out = MARKEE_GIF_FIT_STRETCH;
+        return true;
+    }
+    return false;
+}
 
 #define GIF_LZW_MAX_BITS   12
 #define GIF_LZW_TABLE_SIZE (1U << GIF_LZW_MAX_BITS) /* 4096 */
@@ -276,8 +294,59 @@ static void extract_frame(const uint8_t *canvas_rgba, int src_w,
     }
 }
 
+static void extract_frame_scaled(const uint8_t *canvas_rgba, int src_w, int src_h,
+                                 uint8_t *out_buf, int dst_w, int dst_h,
+                                 MarkeeGifFitMode fit,
+                                 uint8_t bg_r, uint8_t bg_g, uint8_t bg_b) {
+    size_t dst_bytes = (size_t)dst_w * (size_t)dst_h * MARKEE_CHANNELS;
+    if (bg_r == 0 && bg_g == 0 && bg_b == 0) {
+        memset(out_buf, 0, dst_bytes);
+    } else {
+        for (size_t i = 0; i < dst_bytes; i += 3) {
+            out_buf[i + 0] = bg_r;
+            out_buf[i + 1] = bg_g;
+            out_buf[i + 2] = bg_b;
+        }
+    }
+
+    int target_w = dst_w;
+    int target_h = dst_h;
+    int off_x = 0, off_y = 0;
+
+    if (fit == MARKEE_GIF_FIT_CONTAIN) {
+        double sx = (double)dst_w / (double)src_w;
+        double sy = (double)dst_h / (double)src_h;
+        double scale = sx < sy ? sx : sy;
+        target_w = (int)((double)src_w * scale + 0.5);
+        target_h = (int)((double)src_h * scale + 0.5);
+        if (target_w < 1) target_w = 1;
+        if (target_h < 1) target_h = 1;
+        if (target_w > dst_w) target_w = dst_w;
+        if (target_h > dst_h) target_h = dst_h;
+        off_x = (dst_w - target_w) / 2;
+        off_y = (dst_h - target_h) / 2;
+    }
+
+    for (int y = 0; y < target_h; y++) {
+        int sy = (int)(((int64_t)y * (int64_t)src_h) / (int64_t)target_h);
+        if (sy >= src_h) sy = src_h - 1;
+        const uint8_t *src_row = canvas_rgba + (size_t)sy * (size_t)src_w * 4;
+        uint8_t *dst_row = out_buf + ((size_t)(off_y + y) * (size_t)dst_w + (size_t)off_x) * 3;
+        for (int x = 0; x < target_w; x++) {
+            int sx = (int)(((int64_t)x * (int64_t)src_w) / (int64_t)target_w);
+            if (sx >= src_w) sx = src_w - 1;
+            if (src_row[sx * 4 + 3] != 0) {
+                dst_row[x * 3 + 0] = src_row[sx * 4 + 0];
+                dst_row[x * 3 + 1] = src_row[sx * 4 + 1];
+                dst_row[x * 3 + 2] = src_row[sx * 4 + 2];
+            }
+        }
+    }
+}
+
 static bool gif_decode_internal(const uint8_t *data, size_t len, int dst_w, int dst_h,
                                 bool placed, int place_x, int place_y,
+                                MarkeeGifFitMode fit,
                                 bool has_fill, uint8_t bg_r, uint8_t bg_g, uint8_t bg_b,
                                 MarkeeGif **out_gif, char *err_buf, size_t err_size) {
     if (out_gif) *out_gif = NULL;
@@ -637,13 +706,19 @@ static bool gif_decode_internal(const uint8_t *data, size_t len, int dst_w, int 
                 cap_frames = new_cap;
             }
 
-            /* Extract this display-clipped frame from the composited canvas. */
+            /* Extract this display-clipped or scaled frame from the composited canvas. */
             if (frame_bytes > 0) {
-                extract_frame(canvas, src_w,
-                              frames + frame_count * frame_bytes, out_w, out_h,
-                              src_x0, src_y0, blit_dst_x0, blit_dst_y0,
-                              copy_w, copy_h,
-                              has_alpha, has_fill, bg_r, bg_g, bg_b);
+                if (!placed && fit != MARKEE_GIF_FIT_CROP) {
+                    extract_frame_scaled(canvas, src_w, src_h,
+                                         frames + frame_count * frame_bytes, out_w, out_h,
+                                         fit, bg_r, bg_g, bg_b);
+                } else {
+                    extract_frame(canvas, src_w,
+                                  frames + frame_count * frame_bytes, out_w, out_h,
+                                  src_x0, src_y0, blit_dst_x0, blit_dst_y0,
+                                  copy_w, copy_h,
+                                  has_alpha, has_fill, bg_r, bg_g, bg_b);
+                }
             }
 
             /* Standard browser delay rule: clamp < 20 ms (0 or 1 cs) to 100 ms. */
@@ -757,11 +832,19 @@ static bool gif_decode_internal(const uint8_t *data, size_t len, int dst_w, int 
     return true;
 }
 
+bool gif_decode_fit(const uint8_t *data, size_t len, int dst_w, int dst_h,
+                    MarkeeGifFitMode fit,
+                    uint8_t bg_r, uint8_t bg_g, uint8_t bg_b,
+                    MarkeeGif **out_gif, char *err_buf, size_t err_size) {
+    return gif_decode_internal(data, len, dst_w, dst_h, false, 0, 0, fit,
+                               true, bg_r, bg_g, bg_b, out_gif, err_buf, err_size);
+}
+
 bool gif_decode_ex(const uint8_t *data, size_t len, int dst_w, int dst_h,
                    uint8_t bg_r, uint8_t bg_g, uint8_t bg_b,
                    MarkeeGif **out_gif, char *err_buf, size_t err_size) {
-    return gif_decode_internal(data, len, dst_w, dst_h, false, 0, 0,
-                               true, bg_r, bg_g, bg_b, out_gif, err_buf, err_size);
+    return gif_decode_fit(data, len, dst_w, dst_h, MARKEE_GIF_FIT_CROP,
+                          bg_r, bg_g, bg_b, out_gif, err_buf, err_size);
 }
 
 bool gif_decode(const uint8_t *data, size_t len, int dst_w, int dst_h,
@@ -774,6 +857,7 @@ bool gif_decode_placed(const uint8_t *data, size_t len, int dst_w, int dst_h,
                        bool has_fill, uint8_t bg_r, uint8_t bg_g, uint8_t bg_b,
                        MarkeeGif **out_gif, char *err_buf, size_t err_size) {
     return gif_decode_internal(data, len, dst_w, dst_h, true, place_x, place_y,
+                               MARKEE_GIF_FIT_CROP,
                                has_fill, bg_r, bg_g, bg_b, out_gif, err_buf, err_size);
 }
 
