@@ -219,6 +219,7 @@ Zero-dependency Python 3 integrations live in `examples/`:
 - [`examples/pomodoro.py`](examples/pomodoro.py) — Focus / Pomodoro timer with countdown bar, color shift, completion melodies, and `Space`/bezel skip (`python3 examples/pomodoro.py --work 25 --short-break 5`)
 - [`examples/now_playing.py`](examples/now_playing.py) — Now Playing ticker for macOS Spotify/Apple Music and Linux `playerctl` with icon + clipped scrolling title (`python3 examples/now_playing.py --demo`)
 - [`examples/sysmon.py`](examples/sysmon.py) — Live CPU sparkline, memory meter, and network activity monitor for macOS & Linux (`python3 examples/sysmon.py`)
+- [`examples/git_watch.py`](examples/git_watch.py) — Local Git + test runner watcher (`--cmd "make test"`) or GitHub Actions CI monitor (`--github owner/repo`) with pass/fail notifications and melodies
 
 Minimal stdlib-only PNG upload and readback:
 
