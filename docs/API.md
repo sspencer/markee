@@ -454,6 +454,14 @@ Live widgets that update automatically at 60 Hz without client polling.
 ]
 ```
 
+#### `icon`
+
+Draws one of 16 built-in 8×8 monochrome pixel icons (`check`, `cross`, `bell`, `wifi`, `flame`, `play`, `pause`, `battery`, `heart`, `star`, `clock`, `sun`, `moon`, `mail`, `bolt`, `music`) at `(x, y)` with optional integer `scale` (`1..4`, default `1`) and `color` (default `white`).
+
+```json
+{ "op": "icon", "name": "check", "x": 4, "y": 4, "color": "green", "scale": 1 }
+```
+
 ### Fonts
 
 | `font` values | Glyph size | Advance | Supported characters | Fit on 72×16 |

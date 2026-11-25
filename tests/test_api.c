@@ -2286,6 +2286,24 @@ static void test_widgets_api(void) {
         free(r.body);
     }
 
+    /* 6. Built-in pixel icons */
+    {
+        const char *ic = "[{\"op\":\"clear\"},{\"op\":\"icon\",\"name\":\"pause\",\"x\":4,\"y\":4,\"color\":\"amber\",\"scale\":1}]";
+        r = do_request(port, "POST", "/draw", "application/json", ic, strlen(ic));
+        assert(r.status == 200);
+        free(r.body);
+        /* 'pause' row 0 = 0x66 (01100110): x=4+1=5 is lit, x=4+0=4 is black */
+        assert(display_get_pixel(&disp, 5, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 191 && pb == 0);
+        assert(display_get_pixel(&disp, 4, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 0 && pb == 0);
+
+        const char *bad_ic = "[{\"op\":\"icon\",\"name\":\"unicorn\"}]";
+        r = do_request(port, "POST", "/draw", "application/json", bad_ic, strlen(bad_ic));
+        assert(r.status == 400);
+        free(r.body);
+    }
+
     server_stop(srv);
     display_destroy(&disp);
     printf("[PASS] built-in widgets & scene transitions (progress, sparkline, clock, countdown, fade/wipe)\n");

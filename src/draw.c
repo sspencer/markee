@@ -455,6 +455,57 @@ void draw_render_text_buf(uint8_t *buf, int buf_w, int buf_h,
     draw_render_text_buf_clipped(buf, buf_w, buf_h, x, y, text, font, color, 0, 0, buf_w, buf_h);
 }
 
+typedef struct {
+    const char *name;
+    uint8_t rows[8]; /* 8x8 bitmap, bit 7 = leftmost pixel */
+} BuiltinIcon;
+
+static const BuiltinIcon BUILTIN_ICONS[] = {
+    {"check",   {0x00, 0x01, 0x03, 0x86, 0xCC, 0x78, 0x30, 0x00}},
+    {"cross",   {0x81, 0xC3, 0x66, 0x3C, 0x3C, 0x66, 0xC3, 0x81}},
+    {"bell",    {0x18, 0x3C, 0x3C, 0x3C, 0x7E, 0xFF, 0x00, 0x18}},
+    {"wifi",    {0x00, 0x7E, 0x81, 0x3C, 0x42, 0x18, 0x00, 0x18}},
+    {"flame",   {0x10, 0x18, 0x3C, 0x3E, 0x7E, 0x76, 0x3C, 0x18}},
+    {"play",    {0x40, 0x60, 0x70, 0x78, 0x78, 0x70, 0x60, 0x40}},
+    {"pause",   {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66}},
+    {"battery", {0x00, 0xFE, 0x83, 0xBB, 0xBB, 0x83, 0xFE, 0x00}},
+    {"heart",   {0x00, 0x66, 0xFF, 0xFF, 0xFF, 0x7E, 0x3C, 0x18}},
+    {"star",    {0x18, 0x18, 0xFF, 0x7E, 0x3C, 0x66, 0xC3, 0x00}},
+    {"clock",   {0x3C, 0x42, 0x91, 0x91, 0x9E, 0x81, 0x42, 0x3C}},
+    {"sun",     {0x99, 0x42, 0x3C, 0xFF, 0xFF, 0x3C, 0x42, 0x99}},
+    {"moon",    {0x1C, 0x30, 0x60, 0x60, 0x60, 0x62, 0x3C, 0x18}},
+    {"mail",    {0x00, 0xFF, 0xC3, 0xA5, 0x99, 0x81, 0xFF, 0x00}},
+    {"bolt",    {0x0C, 0x18, 0x30, 0x7E, 0x0C, 0x18, 0x30, 0x60}},
+    {"music",   {0x0E, 0x0A, 0x0E, 0x0A, 0x6A, 0xEA, 0x6C, 0x00}},
+};
+
+static const BuiltinIcon *lookup_icon(const char *name) {
+    if (!name || !*name) return NULL;
+    size_t count = sizeof(BUILTIN_ICONS) / sizeof(BUILTIN_ICONS[0]);
+    for (size_t i = 0; i < count; i++) {
+        if (strcasecmp(name, BUILTIN_ICONS[i].name) == 0) return &BUILTIN_ICONS[i];
+    }
+    return NULL;
+}
+
+static void draw_icon_buf(uint8_t *buf, int bw, int bh,
+                          const BuiltinIcon *icon, int x, int y, int scale, MarkeeColor c) {
+    if (scale < 1) scale = 1;
+    if (scale > 4) scale = 4;
+    for (int ry = 0; ry < 8; ry++) {
+        uint8_t row = icon->rows[ry];
+        for (int rx = 0; rx < 8; rx++) {
+            if (row & (0x80U >> rx)) {
+                for (int sy = 0; sy < scale; sy++) {
+                    for (int sx = 0; sx < scale; sx++) {
+                        put_px_buf(buf, bw, bh, x + rx * scale + sx, y + ry * scale + sy, c);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /* --- Shape Rasterizers (called with disp->lock held) --- */
 
 static void draw_line_buf(uint8_t *buf, int bw, int bh,
@@ -1482,8 +1533,33 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
         return true;
     }
 
+    if (strcasecmp(op, "icon") == 0) {
+        const char *name = json_as_string(json_obj_get(obj, "name"));
+        const BuiltinIcon *icon = lookup_icon(name);
+        if (!icon) {
+            snprintf(err_buf, err_size,
+                     "unknown icon '%s' (supported: check, cross, bell, wifi, flame, play, pause, battery, heart, star, clock, sun, moon, mail, bolt, music)",
+                     name ? name : "");
+            return false;
+        }
+        int x = opt_int(obj, "x", 0);
+        int y = opt_int(obj, "y", 0);
+        int scale = opt_int(obj, "scale", 1);
+        if (scale < 1 || scale > 4) {
+            snprintf(err_buf, err_size, "'icon' op 'scale' must be an integer 1..4");
+            return false;
+        }
+        bool hs = false, hf = false;
+        MarkeeColor sc, fc;
+        if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
+        MarkeeColor c = hs ? sc : (hf ? fc : (MarkeeColor){255, 255, 255});
+        draw_icon_buf(buf, bw, bh, icon, x, y, scale, c);
+        draw_icon_buf(static_bg, bw, bh, icon, x, y, scale, c);
+        return true;
+    }
+
     snprintf(err_buf, err_size,
-             "unknown op '%s' (supported: line, rect, oval, polygon, text, pixel, clear, image, progress, sparkline, clock, countdown)",
+             "unknown op '%s' (supported: line, rect, oval, polygon, text, pixel, clear, image, progress, sparkline, clock, countdown, icon)",
              op);
     return false;
 }
