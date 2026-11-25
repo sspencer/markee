@@ -68,8 +68,10 @@ LDFLAGS     ?=
 LDLIBS      := $(RAYLIB_LIBS) -lpthread -lm
 SAN_FLAGS   := -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
 SAN_TARGET  := test_api_san
+FUZZ_DIR    := $(TEST_DIR)/fuzz
+FUZZ_OUT    := $(BUILD_DIR)/fuzz
 
-.PHONY: all debug release run test sanitize sanitize-build clean distclean install uninstall help
+.PHONY: all debug release run test sanitize sanitize-build fuzz-smoke fuzz clean distclean install uninstall help
 
 all: $(TARGET)
 
@@ -108,6 +110,24 @@ sanitize-build: $(SAN_TARGET)
 sanitize: $(SAN_TARGET)
 	./$(SAN_TARGET)
 
+fuzz-smoke:
+	@mkdir -p $(FUZZ_OUT)
+	$(CC) -std=c11 $(WARN_FLAGS) $(SAN_FLAGS) -DFUZZ_STANDALONE -I$(INC_DIR) -I$(FUZZ_DIR) -o $(FUZZ_OUT)/fuzz_gif $(FUZZ_DIR)/fuzz_gif.c $(SRC_DIR)/gif.c -lm
+	$(CC) -std=c11 $(WARN_FLAGS) $(SAN_FLAGS) -DFUZZ_STANDALONE -I$(INC_DIR) -I$(FUZZ_DIR) -o $(FUZZ_OUT)/fuzz_json $(FUZZ_DIR)/fuzz_json.c $(SRC_DIR)/json.c -lm
+	$(CC) -std=c11 $(WARN_FLAGS) $(SAN_FLAGS) -DFUZZ_STANDALONE -I$(INC_DIR) -I$(FUZZ_DIR) $(RAYLIB_CFLAGS) -o $(FUZZ_OUT)/fuzz_draw $(FUZZ_DIR)/fuzz_draw.c $(CORE_SRCS) $(LDLIBS)
+	$(CC) -std=c11 $(WARN_FLAGS) $(SAN_FLAGS) -DFUZZ_STANDALONE -I$(INC_DIR) -I$(FUZZ_DIR) $(RAYLIB_CFLAGS) -o $(FUZZ_OUT)/fuzz_http $(FUZZ_DIR)/fuzz_http.c $(CORE_SRCS) $(LDLIBS)
+	./$(FUZZ_OUT)/fuzz_gif examples/*.gif
+	./$(FUZZ_OUT)/fuzz_json
+	./$(FUZZ_OUT)/fuzz_draw
+	./$(FUZZ_OUT)/fuzz_http
+
+fuzz:
+	@mkdir -p $(FUZZ_OUT)
+	$(CC) -std=c11 $(WARN_FLAGS) -O1 -g -fsanitize=fuzzer,address,undefined -I$(INC_DIR) -I$(FUZZ_DIR) -o $(FUZZ_OUT)/libfuzz_gif $(FUZZ_DIR)/fuzz_gif.c $(SRC_DIR)/gif.c -lm
+	$(CC) -std=c11 $(WARN_FLAGS) -O1 -g -fsanitize=fuzzer,address,undefined -I$(INC_DIR) -I$(FUZZ_DIR) -o $(FUZZ_OUT)/libfuzz_json $(FUZZ_DIR)/fuzz_json.c $(SRC_DIR)/json.c -lm
+	$(CC) -std=c11 $(WARN_FLAGS) -O1 -g -fsanitize=fuzzer,address,undefined -I$(INC_DIR) -I$(FUZZ_DIR) $(RAYLIB_CFLAGS) -o $(FUZZ_OUT)/libfuzz_draw $(FUZZ_DIR)/fuzz_draw.c $(CORE_SRCS) $(LDLIBS)
+	$(CC) -std=c11 $(WARN_FLAGS) -O1 -g -fsanitize=fuzzer,address,undefined -I$(INC_DIR) -I$(FUZZ_DIR) $(RAYLIB_CFLAGS) -o $(FUZZ_OUT)/libfuzz_http $(FUZZ_DIR)/fuzz_http.c $(CORE_SRCS) $(LDLIBS)
+
 install: $(TARGET)
 	install -d "$(DESTDIR)$(BINDIR)"
 	install -m 0755 $(TARGET) "$(DESTDIR)$(BINDIR)/$(TARGET)"
@@ -135,6 +155,8 @@ help:
 	@echo "  make run        Build and launch ./$(TARGET)"
 	@echo "  make test       Build and run the C unit & socket API test suite"
 	@echo "  make sanitize   Build and run tests with ASan + UBSan"
+	@echo "  make fuzz-smoke Build and run standalone ASan/UBSan parser fuzzers"
+	@echo "  make fuzz       Build libFuzzer binaries (requires LLVM clang)"
 	@echo "  make install    Install $(TARGET) to $(BINDIR)"
 	@echo "  make uninstall  Remove $(TARGET) from $(BINDIR)"
 	@echo "  make clean      Remove build artifacts and binaries"

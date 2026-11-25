@@ -55,7 +55,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 ## 5. Engineering, Testing & Distribution
 
 - [x] **CI workflow (GitHub Actions on macOS & Linux):** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds with `-Wall -Wextra -Wpedantic -Werror`, runs `./test_api`, runs `make sanitize` (ASan + UBSan), and validates `examples/*.py` on `macos-latest` and `ubuntu-latest`.
-- [ ] **Fuzz testing for C parsers:** Add libFuzzer harnesses for [gif.c](../src/gif.c), [json.c](../src/json.c), base64 decoding in [draw.c](../src/draw.c), and HTTP request parsing in [server.c](../src/server.c).
+- [x] **Fuzz testing for C parsers:** LibFuzzer + standalone ASan/UBSan smoke harnesses in [`tests/fuzz/`](../tests/fuzz/) covering `gif.c` (`fuzz_gif.c`), `json.c` (`fuzz_json.c`), `draw.c` + base64/PNG/GIF `image` op (`fuzz_draw.c`), and HTTP request parsing in `server.c` (`fuzz_http.c`), runnable via `make fuzz-smoke` and `make fuzz`.
 - [ ] **Config file support (`~/.config/markee/config.ini`):** Persist default zoom, pixel shape, monochrome tint, port, and widget flags without repeating CLI arguments.
 - [ ] **Packaging & native bundles:**
   - macOS `.app` bundle (with optional menu bar tray icon and "launch at login").

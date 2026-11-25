@@ -26,4 +26,7 @@ uint16_t server_get_port(const MarkeeServer *srv);
 /* Gracefully stop the server and release resources. */
 void server_stop(MarkeeServer *srv);
 
+/* In-memory HTTP request parser entry point for fuzz testing (no socket I/O). */
+bool server_fuzz_parse_http(const uint8_t *data, size_t len);
+
 #endif /* MARKEE_SERVER_H */

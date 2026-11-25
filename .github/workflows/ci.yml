@@ -39,5 +39,10 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: make WARN_FLAGS="-Wall -Wextra -Wpedantic -Werror" sanitize
 
+      - name: Run standalone parser fuzz smoke tests (ASan + UBSan)
+        env:
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: make WARN_FLAGS="-Wall -Wextra -Wpedantic -Werror" fuzz-smoke
+
       - name: Validate Python example applets
         run: python3 -m py_compile examples/*.py

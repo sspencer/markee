@@ -68,6 +68,8 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | `make run` | Build and launch `./markee` |
 | `make test` | Build and run the C unit & socket API test suite (`./test_api`) |
 | `make sanitize` | Build and run `./test_api_san` under AddressSanitizer + UndefinedBehaviorSanitizer |
+| `make fuzz-smoke` | Build and run standalone ASan/UBSan fuzz harnesses for GIF, JSON, `/draw`, and HTTP parsers |
+| `make fuzz` | Build native LLVM libFuzzer binaries in `build/fuzz/` (`CC=clang`) |
 | `make debug` / `make release` | Clean rebuild with `-O0 -g` or `-O3` |
 | `make install` / `make uninstall` | Install or remove in `~/.local/bin` (falls back to `/usr/local/bin`; override with `PREFIX=` / `DESTDIR=`) |
 | `make clean` / `make distclean` | Remove build artifacts (`distclean` also deletes `snapshot.png`) |

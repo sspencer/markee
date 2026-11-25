@@ -278,6 +278,7 @@ static bool reader_fill(SockReader *r) {
         }
         r->pos = 0;
     }
+    if (r->fd < 0) return false;
     if (r->len >= sizeof(r->buf)) return false;
     for (;;) {
         ssize_t n = recv(r->fd, r->buf + r->len, sizeof(r->buf) - r->len, 0);
@@ -458,7 +459,7 @@ static int read_http_request(SockReader *r, HttpRequest *req) {
         }
     }
 
-    if (req->expect_continue) {
+    if (req->expect_continue && r->fd >= 0) {
         const char *cont = "HTTP/1.1 100 Continue\r\n\r\n";
         if (!send_all(r->fd, cont, strlen(cont))) return -1;
     }
@@ -2233,4 +2234,28 @@ void server_stop(MarkeeServer *srv) {
     }
     pthread_join(srv->accept_thread, NULL);
     free(srv);
+}
+
+bool server_fuzz_parse_http(const uint8_t *data, size_t len) {
+    if (!data || len == 0) return false;
+    SockReader reader;
+    memset(&reader, 0, sizeof(reader));
+    reader.fd = -1;
+    size_t copy = len > sizeof(reader.buf) ? sizeof(reader.buf) : len;
+    memcpy(reader.buf, data, copy);
+    reader.len = copy;
+
+    HttpRequest req;
+    int rc = read_http_request(&reader, &req);
+    if (rc == READ_OK) {
+        char val[128];
+        (void)query_get(req.query, "color", val, sizeof(val));
+        (void)query_get(req.query, "token", val, sizeof(val));
+        (void)query_get(req.query, "transition", val, sizeof(val));
+        (void)query_get(req.query, "melody", val, sizeof(val));
+        free(req.body);
+        return true;
+    }
+    free(req.body);
+    return false;
 }
