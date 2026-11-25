@@ -150,7 +150,7 @@ uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/$(TARGET)"
 
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET) $(TEST_TARGET) $(SAN_TARGET)
+	rm -rf $(BUILD_DIR) $(TARGET) $(TEST_TARGET) $(SAN_TARGET) $(SAN_TARGET).dSYM
 
 distclean: clean
 	rm -f snapshot.png recording.gif
