@@ -43,7 +43,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 
 ## 4. Integrations & Example Applets (`examples/`)
 
-- [ ] **AI Agent / MCP Server integration:** Expose `markee` as an MCP tool so coding agents can show task progress, build results, and trigger a gentle chime + animation when long runs finish.
+- [x] **AI Agent / MCP Server integration:** Zero-dependency stdio JSON-RPC 2.0 MCP server in [`examples/mcp_server.py`](../examples/mcp_server.py) exposing `markee_info`, `markee_say`, `markee_notify`, `markee_progress`, `markee_draw`, `markee_timer`, `markee_clock`, `markee_alert`, and `markee_clear`.
 - [ ] **Focus / Pomodoro timer applet:** Countdown display, progress bar, color shift, and end-of-session chime.
 - [ ] **Now Playing ticker:** Show current track/artist from macOS Now Playing / Spotify / MPRIS with an animated equalizer or icon.
 - [ ] **System monitor applet:** Live CPU, memory, and network sparklines/meters.

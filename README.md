@@ -210,13 +210,12 @@ curl http://127.0.0.1:8080/info
 
 > **Colors:** every color endpoint accepts `0xff5500`, `ff5500`, `#ff5500`, 3-digit shorthand (`0xf50`), and named colors (`amber`, `warmwhite`, `teal`, etc.). In query strings, avoid raw `#` (use `0x`, bare hex, or `%23`). See [Color formats](docs/API.md#color-formats).
 
-### Python client example
+### Python applets & MCP server
 
-A zero-dependency Python 3 client is included in [`examples/demo.py`](examples/demo.py). With `./markee` running:
+Zero-dependency Python 3 integrations live in `examples/`:
 
-```bash
-python3 examples/demo.py --seconds 8 --save readback.png
-```
+- [`examples/demo.py`](examples/demo.py) — `/info`, PNG round-trip, and 60 FPS raw RGB24 stream (`python3 examples/demo.py --seconds 8 --save readback.png`)
+- [`examples/mcp_server.py`](examples/mcp_server.py) — stdio **Model Context Protocol (MCP)** server exposing `markee_say`, `markee_notify`, `markee_progress`, `markee_draw`, `markee_timer`, `markee_clock`, `markee_alert`, `markee_clear`, and `markee_info` to AI coding agents (reads `MARKEE_URL` / `MARKEE_TOKEN`)
 
 Minimal stdlib-only PNG upload and readback:
 
