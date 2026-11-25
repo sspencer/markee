@@ -1030,13 +1030,19 @@ static void tick_animations(MarkeeDisplay *disp, double time_sec) {
 
             int offset = (int)floor(elapsed * disp->scroll.speed);
             int text_w = disp->scroll.text_w > 0 ? disp->scroll.text_w : 1;
-            int span = disp->width + text_w;
-            int draw_x = ((disp->scroll.start_x - offset + text_w) % span + span) % span - text_w;
+            int region_x = disp->scroll.has_clip ? disp->scroll.clip_x : 0;
+            int region_y = disp->scroll.has_clip ? disp->scroll.clip_y : 0;
+            int region_w = disp->scroll.has_clip ? disp->scroll.clip_w : disp->width;
+            int region_h = disp->scroll.has_clip ? disp->scroll.clip_h : disp->height;
+            int span = region_w + text_w;
+            int rel_start = disp->scroll.start_x - region_x;
+            int draw_x = region_x + (((rel_start - offset + text_w) % span + span) % span - text_w);
 
             MarkeeColor col = {disp->scroll.r, disp->scroll.g, disp->scroll.b};
-            draw_render_text_buf(disp->pixels, disp->width, disp->height,
-                                 draw_x, disp->scroll.y,
-                                 disp->scroll.text, disp->scroll.font, col);
+            draw_render_text_buf_clipped(disp->pixels, disp->width, disp->height,
+                                         draw_x, disp->scroll.y,
+                                         disp->scroll.text, disp->scroll.font, col,
+                                         region_x, region_y, region_w, region_h);
         }
 
         disp->frame_seq++;

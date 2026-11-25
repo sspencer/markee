@@ -521,6 +521,40 @@ static void test_draw_api(void) {
     }
     assert(lit_after_same_box < lit_before);
 
+    /* 3b. Clipped scrolling text stays strictly inside [clip_x, clip_y, clip_w, clip_h] */
+    {
+        const char *clip_json = "["
+            "{\"op\":\"clear\"},"
+            "{\"op\":\"rect\",\"x\":0,\"y\":0,\"w\":16,\"h\":16,\"fill\":\"blue\"},"
+            "{\"op\":\"text\",\"x\":18,\"y\":4,\"text\":\"SCROLLING TEXT\",\"color\":\"white\","
+            "\"scroll\":true,\"speed\":30,\"clip\":[18,0,54,16]}"
+            "]";
+        r = do_request(port, "POST", "/draw", "application/json", clip_json, strlen(clip_json));
+        assert(r.status == 200);
+        free(r.body);
+
+        display_tick(&disp, 5.0);
+        display_tick(&disp, 5.5); /* shifts left by 15px, well past x=18 into left region if unclipped */
+        /* Left icon region x=0..15 must remain pure blue, untouched by scrolling text */
+        for (int y = 0; y < 16; y++) {
+            for (int x = 0; x < 16; x++) {
+                assert(display_get_pixel(&disp, x, y, &pr, &pg, &pb) == MARKEE_OK);
+                assert(pr == 0 && pg == 0 && pb == 255);
+            }
+        }
+        /* Columns 16..17 gap remains black */
+        for (int y = 0; y < 16; y++) {
+            assert(display_get_pixel(&disp, 17, y, &pr, &pg, &pb) == MARKEE_OK);
+            assert(pr == 0 && pg == 0 && pb == 0);
+        }
+
+        /* Invalid clip array rejected with 400 */
+        const char *bad_clip = "[{\"op\":\"text\",\"x\":0,\"y\":0,\"text\":\"A\",\"clip\":[0,0,0,10]}]";
+        r = do_request(port, "POST", "/draw", "application/json", bad_clip, strlen(bad_clip));
+        assert(r.status == 400);
+        free(r.body);
+    }
+
     /* 4. Bare JSON object (not an array) and empty array [] are rejected with 400 */
     const char *bare_obj = "{ \"op\": \"line\", \"x1\": 0, \"y1\": 0, \"x2\": 5, \"y2\": 5, \"color\": \"white\" }";
     r = do_request(port, "POST", "/draw", "application/json", bare_obj, strlen(bare_obj));

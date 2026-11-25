@@ -384,6 +384,7 @@ Draws single-line bitmap text without wrapping (overflowing glyphs are clipped).
 | `color` | `white` | Text color |
 | `scroll` | `false` | `true` enables horizontal marquee scrolling (see [Scrolling text](#scrolling-text)) |
 | `speed` | `24` | Scroll speed in pixels/second (values `≤ 0` fall back to `24`) |
+| `clip` | full screen | Optional `[x, y, w, h]` clip rectangle (`w > 0, h > 0`). Confines both static and scrolling text inside the box so tickers stay clear of side icons/GIFs |
 
 ```json
 { "op": "text", "x": 16, "y": 4, "text": "READY", "font": "6x8", "color": "warmwhite" }

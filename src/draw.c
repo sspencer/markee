@@ -327,10 +327,28 @@ int draw_measure_text(const char *text, const char *font) {
     return len * advance;
 }
 
-void draw_render_text_buf(uint8_t *buf, int buf_w, int buf_h,
-                          int x, int y, const char *text, const char *font,
-                          MarkeeColor color) {
-    if (!buf || !text) return;
+static void put_px_clipped(uint8_t *buf, int buf_w, int buf_h, int x, int y,
+                           int clip_x0, int clip_y0, int clip_x1, int clip_y1,
+                           MarkeeColor c) {
+    if (x < clip_x0 || x >= clip_x1 || y < clip_y0 || y >= clip_y1) return;
+    if (x < 0 || x >= buf_w || y < 0 || y >= buf_h) return;
+    size_t idx = ((size_t)y * (size_t)buf_w + (size_t)x) * 3;
+    buf[idx + 0] = c.r;
+    buf[idx + 1] = c.g;
+    buf[idx + 2] = c.b;
+}
+
+void draw_render_text_buf_clipped(uint8_t *buf, int buf_w, int buf_h,
+                                  int x, int y, const char *text, const char *font,
+                                  MarkeeColor color,
+                                  int clip_x, int clip_y, int clip_w, int clip_h) {
+    if (!buf || !text || clip_w <= 0 || clip_h <= 0) return;
+    int cx0 = clip_x > 0 ? clip_x : 0;
+    int cy0 = clip_y > 0 ? clip_y : 0;
+    int cx1 = (clip_x + clip_w) < buf_w ? (clip_x + clip_w) : buf_w;
+    int cy1 = (clip_y + clip_h) < buf_h ? (clip_y + clip_h) : buf_h;
+    if (cx0 >= cx1 || cy0 >= cy1) return;
+
     FontStyle fs = resolve_font(font);
     int cursor_x = x;
 
@@ -342,7 +360,8 @@ void draw_render_text_buf(uint8_t *buf, int buf_w, int buf_h,
                 for (int cx = 0; cx < 3; cx++) {
                     for (int cy = 0; cy < 5; cy++) {
                         if (cols[cx] & (1U << cy)) {
-                            put_px_buf(buf, buf_w, buf_h, cursor_x + cx, y + cy, color);
+                            put_px_clipped(buf, buf_w, buf_h, cursor_x + cx, y + cy,
+                                           cx0, cy0, cx1, cy1, color);
                         }
                     }
                 }
@@ -355,10 +374,12 @@ void draw_render_text_buf(uint8_t *buf, int buf_w, int buf_h,
                 uint8_t bits = cols[cx];
                 for (int cy = 0; cy < 7; cy++) {
                     if (bits & (1U << cy)) {
-                        put_px_buf(buf, buf_w, buf_h, cursor_x + cx, y + cy, color);
+                        put_px_clipped(buf, buf_w, buf_h, cursor_x + cx, y + cy,
+                                       cx0, cy0, cx1, cy1, color);
                         if (fs == FONT_8X8) {
                             /* Faux-bold 1px horizontal thickening */
-                            put_px_buf(buf, buf_w, buf_h, cursor_x + cx + 1, y + cy, color);
+                            put_px_clipped(buf, buf_w, buf_h, cursor_x + cx + 1, y + cy,
+                                           cx0, cy0, cx1, cy1, color);
                         }
                     }
                 }
@@ -366,6 +387,12 @@ void draw_render_text_buf(uint8_t *buf, int buf_w, int buf_h,
             cursor_x += (fs == FONT_8X8) ? 7 : 6;
         }
     }
+}
+
+void draw_render_text_buf(uint8_t *buf, int buf_w, int buf_h,
+                          int x, int y, const char *text, const char *font,
+                          MarkeeColor color) {
+    draw_render_text_buf_clipped(buf, buf_w, buf_h, x, y, text, font, color, 0, 0, buf_w, buf_h);
 }
 
 /* --- Shape Rasterizers (called with disp->lock held) --- */
@@ -939,6 +966,23 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
             if (speed <= 0.0) speed = 24.0;
         }
 
+        bool has_clip = false;
+        int clip_x = 0, clip_y = 0, clip_w = bw, clip_h = bh;
+        const JsonValue *jclip = json_obj_get(obj, "clip");
+        if (jclip && jclip->type != JSON_NULL) {
+            if (jclip->type != JSON_ARRAY || jclip->u.arr.count != 4 ||
+                !json_as_int(jclip->u.arr.items[0], &clip_x) ||
+                !json_as_int(jclip->u.arr.items[1], &clip_y) ||
+                !json_as_int(jclip->u.arr.items[2], &clip_w) ||
+                !json_as_int(jclip->u.arr.items[3], &clip_h) ||
+                clip_w <= 0 || clip_h <= 0) {
+                snprintf(err_buf, err_size,
+                         "'text' op 'clip' must be a [x, y, w, h] array with w > 0 and h > 0");
+                return false;
+            }
+            has_clip = true;
+        }
+
         bool hs = false, hf = false;
         MarkeeColor sc, fc;
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
@@ -960,13 +1004,20 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
             scroll_state->g = c.g;
             scroll_state->b = c.b;
             scroll_state->speed = speed;
+            scroll_state->has_clip = has_clip;
+            scroll_state->clip_x = clip_x;
+            scroll_state->clip_y = clip_y;
+            scroll_state->clip_w = clip_w;
+            scroll_state->clip_h = clip_h;
         } else {
             scroll_state->active = false;
             scroll_state->has_start_time = false;
-            draw_render_text_buf(static_bg, bw, bh, x, y, text, font, c);
+            draw_render_text_buf_clipped(static_bg, bw, bh, x, y, text, font, c,
+                                         clip_x, clip_y, clip_w, clip_h);
         }
 
-        draw_render_text_buf(buf, bw, bh, x, y, text, font, c);
+        draw_render_text_buf_clipped(buf, bw, bh, x, y, text, font, c,
+                                     clip_x, clip_y, clip_w, clip_h);
         return true;
     }
 

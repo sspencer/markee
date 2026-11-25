@@ -23,6 +23,10 @@ int draw_measure_text(const char *text, const char *font);
 void draw_render_text_buf(uint8_t *buf, int buf_w, int buf_h,
                           int x, int y, const char *text, const char *font,
                           MarkeeColor color);
+void draw_render_text_buf_clipped(uint8_t *buf, int buf_w, int buf_h,
+                                  int x, int y, const char *text, const char *font,
+                                  MarkeeColor color,
+                                  int clip_x, int clip_y, int clip_w, int clip_h);
 
 /* Execute a /draw JSON payload against the display.
  * The JSON body must be a non-empty array of one or more draw operation objects:

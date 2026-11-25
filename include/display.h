@@ -28,6 +28,8 @@ typedef struct {
     int text_w;
     uint8_t r, g, b;
     double speed;       /* pixels per second */
+    bool has_clip;
+    int clip_x, clip_y, clip_w, clip_h;
     bool has_start_time;
     double start_time;
     uint8_t *bg_pixels; /* background snapshot underneath scrolling text */
