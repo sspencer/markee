@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <ctype.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -22,24 +23,84 @@ static void on_signal(int sig) {
     atomic_store(&g_quit, true);
 }
 
+static bool parse_resolution(const char *s, int *out_w, int *out_h) {
+    if (!s || !*s || !out_w || !out_h) return false;
+    char *sep = NULL;
+    long w = strtol(s, &sep, 10);
+    if (sep == s || (*sep != 'x' && *sep != 'X')) return false;
+    const char *h_start = sep + 1;
+    if (!isdigit((unsigned char)*h_start)) return false;
+    char *end = NULL;
+    long h = strtol(h_start, &end, 10);
+    if (end == h_start || *end != '\0') return false;
+    if (w < MARKEE_MIN_DIM || w > MARKEE_MAX_DIM ||
+        h < MARKEE_MIN_DIM || h > MARKEE_MAX_DIM) {
+        return false;
+    }
+    *out_w = (int)w;
+    *out_h = (int)h;
+    return true;
+}
+
+static bool parse_zoom(const char *s, float *out_zoom) {
+    if (!s || !*s || !out_zoom) return false;
+    char *end = NULL;
+    float z = strtof(s, &end);
+    if (end == s || *end != '\0') return false;
+    if (z < MARKEE_MIN_ZOOM || z > MARKEE_MAX_ZOOM) return false;
+    *out_zoom = z;
+    return true;
+}
+
+static bool parse_pixel_shape(const char *s, MarkeePixelShape *out_shape) {
+    if (!s || !out_shape) return false;
+    if (strcmp(s, "square") == 0) {
+        *out_shape = MARKEE_PIXEL_SQUARE;
+        return true;
+    }
+    if (strcmp(s, "circle") == 0) {
+        *out_shape = MARKEE_PIXEL_CIRCLE;
+        return true;
+    }
+    return false;
+}
+
 static void print_usage(const char *prog) {
     printf("Usage: %s [options]\n\n"
-           "Simulated 72x16 24-bit RGB LED matrix display (6.35\" wide, 60 Hz)\n"
+           "Simulated 24-bit RGB LED matrix display (default %dx%d, 6.35\" wide, 60 Hz)\n"
            "with an HTTP/TCP socket API for PNG and raw RGB frame I/O.\n\n"
            "Options:\n"
-           "  -H, --host <ip>     Bind IP address (default: %s)\n"
-           "  -p, --port <port>   TCP port to listen on (default: %d, or MARKEE_PORT)\n"
-           "      --dpi <value>   Override monitor logical DPI for 6.35\" physical sizing\n"
-           "      --blank         Start with a blank display instead of the startup demo\n"
-           "      --headless      Run API server only without opening a GUI window\n"
-           "  -h, --help          Show this help message\n\n"
+           "  -r, --resolution <WxH>  LED matrix resolution in pixels (default: %dx%d,\n"
+           "                          range: %d..%d per axis, e.g. 128x32, 64x64)\n"
+           "  -z, --zoom <factor>     Display zoom multiplier (default: %.1f,\n"
+           "                          range: %.1f..%.1f, e.g. 0.5, 1.5, 2.0)\n"
+           "      --square            Render each LED pixel as a square (default)\n"
+           "      --circle            Render each LED pixel as a circle\n"
+           "  -s, --shape <style>     Pixel display style: square or circle (default: square)\n"
+           "  -H, --host <ip>         Bind IP address (default: %s)\n"
+           "  -p, --port <port>       TCP port to listen on (default: %d, or MARKEE_PORT)\n"
+           "      --dpi <value>       Override monitor logical DPI for physical sizing\n"
+           "      --blank             Start with a blank display instead of the startup demo\n"
+           "      --headless          Run API server only without opening a GUI window\n"
+           "  -h, --help              Show this help message and exit\n\n"
            "Keyboard shortcuts (GUI mode):\n"
-           "  C                   Clear display\n"
-           "  D                   Toggle startup demo animation\n"
-           "  S                   Save current 72x16 frame to snapshot.png\n"
-           "  + / -               Adjust brightness (+/- 10%%)\n"
-           "  Q / ESC             Quit\n",
-           prog, MARKEE_DEFAULT_HOST, MARKEE_DEFAULT_PORT);
+           "  C                       Clear display\n"
+           "  D                       Toggle startup demo animation\n"
+           "  P                       Toggle pixel shape (square / circle)\n"
+           "  S                       Save current frame to snapshot.png\n"
+           "  + / -                   Adjust brightness (+/- 10%%)\n"
+           "  Q / ESC                 Quit\n\n"
+           "Examples:\n"
+           "  %s                           # Default 72x16 square LEDs at 1.0x zoom\n"
+           "  %s --circle --zoom 2         # 72x16 circular LEDs at 2x size\n"
+           "  %s -r 128x32 -z 0.75         # Custom 128x32 LED matrix at 0.75x zoom\n",
+           prog,
+           MARKEE_DEFAULT_WIDTH, MARKEE_DEFAULT_HEIGHT,
+           MARKEE_DEFAULT_WIDTH, MARKEE_DEFAULT_HEIGHT,
+           MARKEE_MIN_DIM, MARKEE_MAX_DIM,
+           MARKEE_DEFAULT_ZOOM, MARKEE_MIN_ZOOM, MARKEE_MAX_ZOOM,
+           MARKEE_DEFAULT_HOST, MARKEE_DEFAULT_PORT,
+           prog, prog, prog);
 }
 
 static void save_snapshot_png(MarkeeDisplay *disp, const char *filename) {
@@ -65,6 +126,10 @@ static void save_snapshot_png(MarkeeDisplay *disp, const char *filename) {
 }
 
 int main(int argc, char **argv) {
+    int width = MARKEE_DEFAULT_WIDTH;
+    int height = MARKEE_DEFAULT_HEIGHT;
+    float zoom = MARKEE_DEFAULT_ZOOM;
+    MarkeePixelShape pixel_shape = MARKEE_PIXEL_SQUARE;
     const char *host = MARKEE_DEFAULT_HOST;
     uint16_t port = MARKEE_DEFAULT_PORT;
     float override_dpi = 0.0f;
@@ -78,7 +143,29 @@ int main(int argc, char **argv) {
     }
 
     for (int i = 1; i < argc; i++) {
-        if ((strcmp(argv[i], "-H") == 0 || strcmp(argv[i], "--host") == 0) && i + 1 < argc) {
+        if ((strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--resolution") == 0) && i + 1 < argc) {
+            if (!parse_resolution(argv[++i], &width, &height)) {
+                fprintf(stderr, "Invalid resolution '%s' (expected WxH, each %d..%d)\n",
+                        argv[i], MARKEE_MIN_DIM, MARKEE_MAX_DIM);
+                return 1;
+            }
+        } else if ((strcmp(argv[i], "-z") == 0 || strcmp(argv[i], "--zoom") == 0) && i + 1 < argc) {
+            if (!parse_zoom(argv[++i], &zoom)) {
+                fprintf(stderr, "Invalid zoom '%s' (expected %.1f..%.1f)\n",
+                        argv[i], MARKEE_MIN_ZOOM, MARKEE_MAX_ZOOM);
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--square") == 0) {
+            pixel_shape = MARKEE_PIXEL_SQUARE;
+        } else if (strcmp(argv[i], "--circle") == 0) {
+            pixel_shape = MARKEE_PIXEL_CIRCLE;
+        } else if ((strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--shape") == 0) && i + 1 < argc) {
+            if (!parse_pixel_shape(argv[++i], &pixel_shape)) {
+                fprintf(stderr, "Invalid pixel shape '%s' (expected 'square' or 'circle')\n",
+                        argv[i]);
+                return 1;
+            }
+        } else if ((strcmp(argv[i], "-H") == 0 || strcmp(argv[i], "--host") == 0) && i + 1 < argc) {
             host = argv[++i];
         } else if ((strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--port") == 0) && i + 1 < argc) {
             long p = strtol(argv[++i], NULL, 10);
@@ -101,7 +188,7 @@ int main(int argc, char **argv) {
             print_usage(argv[0]);
             return 0;
         } else {
-            fprintf(stderr, "Unknown argument: %s\n", argv[i]);
+            fprintf(stderr, "Unknown or incomplete argument: %s\n\n", argv[i]);
             print_usage(argv[0]);
             return 1;
         }
@@ -115,8 +202,8 @@ int main(int argc, char **argv) {
     sigaction(SIGTERM, &sa, NULL);
 
     MarkeeDisplay display;
-    if (!display_init(&display, start_demo)) {
-        fprintf(stderr, "Failed to initialize display state\n");
+    if (!display_init(&display, width, height, start_demo)) {
+        fprintf(stderr, "Failed to initialize %dx%d display state\n", width, height);
         return 1;
     }
 
@@ -128,9 +215,14 @@ int main(int argc, char **argv) {
     }
 
     uint16_t actual_port = server_get_port(srv);
-    printf("markee API listening on http://%s:%u\n", host, (unsigned)actual_port);
-    printf("  POST /frame   Upload 72x16 PNG (or 3456-byte raw RGB24)\n");
-    printf("  GET  /frame   Download displayed 72x16 pixels as PNG (?format=raw for RGB24)\n");
+    printf("markee (%dx%d, zoom=%.2fx, pixels=%s) API listening on http://%s:%u\n",
+           width, height, zoom,
+           pixel_shape == MARKEE_PIXEL_CIRCLE ? "circle" : "square",
+           host, (unsigned)actual_port);
+    printf("  POST /frame   Upload %dx%d PNG (or %zu-byte raw RGB24)\n",
+           width, height, display.frame_bytes);
+    printf("  GET  /frame   Download displayed %dx%d pixels as PNG (?format=raw for RGB24)\n",
+           width, height);
     printf("  GET  /info    Device status & capabilities\n");
     fflush(stdout);
 
@@ -143,8 +235,16 @@ int main(int argc, char **argv) {
             t += 1.0 / (double)MARKEE_REFRESH_HZ;
         }
     } else {
-        MarkeeLayout layout = renderer_init_window(host, actual_port, override_dpi);
-        uint8_t frame_buf[MARKEE_FRAME_BYTES];
+        uint8_t *frame_buf = malloc(display.frame_bytes);
+        if (!frame_buf) {
+            fprintf(stderr, "Failed to allocate render buffer\n");
+            server_stop(srv);
+            display_destroy(&display);
+            return 1;
+        }
+
+        MarkeeLayout layout = renderer_init_window(width, height, zoom, pixel_shape,
+                                                   host, actual_port, override_dpi);
 
         while (!WindowShouldClose() && !atomic_load(&g_quit)) {
             if (IsKeyPressed(KEY_Q)) break;
@@ -153,6 +253,11 @@ int main(int argc, char **argv) {
             }
             if (IsKeyPressed(KEY_D)) {
                 display_set_demo(&display, !display_is_demo_active(&display));
+            }
+            if (IsKeyPressed(KEY_P)) {
+                layout.pixel_shape = (layout.pixel_shape == MARKEE_PIXEL_SQUARE)
+                                         ? MARKEE_PIXEL_CIRCLE
+                                         : MARKEE_PIXEL_SQUARE;
             }
             if (IsKeyPressed(KEY_S)) {
                 save_snapshot_png(&display, "snapshot.png");
@@ -169,7 +274,7 @@ int main(int argc, char **argv) {
             display_tick_demo(&display, GetTime());
 
             uint8_t brightness = 100;
-            display_snapshot(&display, frame_buf, &brightness);
+            display_snapshot(&display, frame_buf, display.frame_bytes, &brightness);
 
             BeginDrawing();
             renderer_draw(&layout, frame_buf, brightness);
@@ -177,6 +282,7 @@ int main(int argc, char **argv) {
         }
 
         CloseWindow();
+        free(frame_buf);
     }
 
     server_stop(srv);

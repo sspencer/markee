@@ -6,10 +6,23 @@
 
 #include "config.h"
 
+typedef enum {
+    MARKEE_PIXEL_SQUARE = 0,
+    MARKEE_PIXEL_CIRCLE
+} MarkeePixelShape;
+
 typedef struct {
+    int width;
+    int height;
+    float zoom;
+    MarkeePixelShape pixel_shape;
+
     int window_w;
     int window_h;
     float dpi;
+
+    /* Reference 72x16 body height at current DPI*zoom (for consistent corner radii) */
+    float ref_body_h;
 
     /* Outer plastic casing rect */
     float body_x;
@@ -23,7 +36,7 @@ typedef struct {
     float face_w;
     float face_h;
 
-    /* Recessed 72x16 LED matrix active area */
+    /* Recessed WxH LED matrix active area */
     float matrix_x;
     float matrix_y;
     float matrix_w;
@@ -32,15 +45,22 @@ typedef struct {
     float cell_pitch;
 } MarkeeLayout;
 
-/* Compute layout for a given logical DPI (or auto-detect when override_dpi <= 0). */
-MarkeeLayout renderer_compute_layout(float override_dpi, int monitor_w, int monitor_phys_w_mm);
+/* Compute layout for resolution (width x height), zoom factor, pixel shape, and logical DPI
+ * (or auto-detect DPI when override_dpi <= 0). */
+MarkeeLayout renderer_compute_layout(int width, int height, float zoom,
+                                     MarkeePixelShape pixel_shape,
+                                     float override_dpi,
+                                     int monitor_w, int monitor_phys_w_mm);
 
-/* Initialize raylib window calibrated so the LED matrix appears ~6.35 inches wide. */
-MarkeeLayout renderer_init_window(const char *host, uint16_t port, float override_dpi);
+/* Initialize raylib window calibrated for the given resolution, zoom level, and pixel shape. */
+MarkeeLayout renderer_init_window(int width, int height, float zoom,
+                                  MarkeePixelShape pixel_shape,
+                                  const char *host, uint16_t port,
+                                  float override_dpi);
 
-/* Draw one frame of the plastic-encased 72x16 LED display. */
+/* Draw one frame of the plastic-encased LED display. */
 void renderer_draw(const MarkeeLayout *layout,
-                   const uint8_t pixels[MARKEE_FRAME_BYTES],
+                   const uint8_t *pixels,
                    uint8_t brightness);
 
 #endif /* MARKEE_RENDERER_H */

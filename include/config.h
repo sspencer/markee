@@ -1,16 +1,27 @@
 #ifndef MARKEE_CONFIG_H
 #define MARKEE_CONFIG_H
 
-/* Hardware display specification (BUSY Bar front matrix) */
-#define MARKEE_WIDTH                 72
-#define MARKEE_HEIGHT                16
+/* Default hardware display specification (BUSY Bar front matrix) */
+#define MARKEE_DEFAULT_WIDTH         72
+#define MARKEE_DEFAULT_HEIGHT        16
+#define MARKEE_MIN_DIM               1
+#define MARKEE_MAX_DIM               1024
 #define MARKEE_CHANNELS              3
-#define MARKEE_FRAME_BYTES           (MARKEE_WIDTH * MARKEE_HEIGHT * MARKEE_CHANNELS)
 #define MARKEE_REFRESH_HZ            60
 
-/* Target physical width of the 72x16 LED matrix on screen (inches) */
+/* Backward-compatible default aliases */
+#define MARKEE_WIDTH                 MARKEE_DEFAULT_WIDTH
+#define MARKEE_HEIGHT                MARKEE_DEFAULT_HEIGHT
+#define MARKEE_FRAME_BYTES           (MARKEE_DEFAULT_WIDTH * MARKEE_DEFAULT_HEIGHT * MARKEE_CHANNELS)
+
+/* Target physical width of the default 72x16 LED matrix on screen (inches) */
 #define MARKEE_MATRIX_WIDTH_INCHES   6.35f
 #define MARKEE_MM_PER_INCH           25.4f
+
+/* Zoom limits */
+#define MARKEE_DEFAULT_ZOOM          1.0f
+#define MARKEE_MIN_ZOOM              0.1f
+#define MARKEE_MAX_ZOOM              10.0f
 
 /* Real BUSY Bar physical proportions (mm) used for plastic enclosure ratios:
  *   Body:   168.6 x 55.2 mm
@@ -29,7 +40,7 @@
 /* Embedded HTTP/TCP API server defaults */
 #define MARKEE_DEFAULT_HOST          "127.0.0.1"
 #define MARKEE_DEFAULT_PORT          8080
-#define MARKEE_MAX_BODY_BYTES        (1024 * 1024) /* 1 MiB max upload */
+#define MARKEE_MAX_BODY_BYTES        (4 * 1024 * 1024) /* 4 MiB max upload */
 #define MARKEE_MAX_HEADER_BYTES      16384
 #define MARKEE_MAX_CLIENTS           32
 

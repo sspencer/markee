@@ -270,7 +270,6 @@ static bool read_chunked_body(SockReader *r, uint8_t **out_buf, size_t *out_len)
             free(buf);
             return false;
         }
-        /* Strip optional chunk extension after ';' */
         char *semi = strchr(line, ';');
         if (semi) *semi = '\0';
 
@@ -281,7 +280,6 @@ static bool read_chunked_body(SockReader *r, uint8_t **out_buf, size_t *out_len)
             return false;
         }
         if (chunk_size == 0) {
-            /* Consume trailing headers up to empty line */
             while (reader_read_line(r, line, sizeof(line)) && line[0] != '\0') {}
             buf[total] = '\0';
             *out_buf = buf;
@@ -307,7 +305,6 @@ static bool read_chunked_body(SockReader *r, uint8_t **out_buf, size_t *out_len)
             return false;
         }
         total += (size_t)chunk_size;
-        /* Trailing CRLF after chunk payload */
         if (!reader_read_line(r, line, sizeof(line))) {
             free(buf);
             return false;
@@ -321,10 +318,9 @@ static int read_http_request(SockReader *r, HttpRequest *req) {
 
     char line[1024];
     if (!reader_read_line(r, line, sizeof(line))) {
-        return 0; /* EOF or timeout */
+        return 0;
     }
     if (line[0] == '\0') {
-        /* Tolerate single leading CRLF before request line */
         if (!reader_read_line(r, line, sizeof(line))) return 0;
     }
 
@@ -343,7 +339,6 @@ static int read_http_request(SockReader *r, HttpRequest *req) {
     }
     snprintf(req->path, sizeof(req->path), "%s", target);
 
-    /* Read headers */
     size_t header_bytes = strlen(line);
     while (reader_read_line(r, line, sizeof(line))) {
         header_bytes += strlen(line) + 2;
@@ -405,11 +400,9 @@ static bool has_png_magic(const uint8_t *data, size_t len) {
 
 static bool extract_rgb_params(const HttpRequest *req, uint8_t *r, uint8_t *g, uint8_t *b) {
     char val[64];
-    /* 1. Try query ?color=RRGGBB */
     if (query_get(req->query, "color", val, sizeof(val))) {
         return parse_hex_color(val, r, g, b);
     }
-    /* 2. Try query ?r=..&g=..&b=.. */
     int ri = 0, gi = 0, bi = 0;
     if (query_get(req->query, "r", val, sizeof(val)) && parse_int_param(val, &ri) &&
         query_get(req->query, "g", val, sizeof(val)) && parse_int_param(val, &gi) &&
@@ -420,7 +413,6 @@ static bool extract_rgb_params(const HttpRequest *req, uint8_t *r, uint8_t *g, u
         *b = (uint8_t)bi;
         return true;
     }
-    /* 3. Try JSON body */
     if (req->body && req->body_len > 0) {
         const char *jb = (const char *)req->body;
         if (json_get_str(jb, "color", val, sizeof(val))) {
@@ -452,20 +444,22 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
     if (strcmp(req->method, "GET") == 0 &&
         (strcmp(req->path, "/") == 0 || strcmp(req->path, "/info") == 0 ||
          strcmp(req->path, "/api/info") == 0)) {
+        double phys_w_in = (double)MARKEE_MATRIX_WIDTH_INCHES *
+                           ((double)disp->width / (double)MARKEE_DEFAULT_WIDTH);
         char json[512];
         snprintf(json, sizeof(json),
                  "{\"name\":\"markee\","
                  "\"width\":%d,"
                  "\"height\":%d,"
                  "\"bits_per_pixel\":24,"
-                 "\"raw_frame_bytes\":%d,"
+                 "\"raw_frame_bytes\":%zu,"
                  "\"refresh_hz\":%d,"
                  "\"physical_width_inches\":%.2f,"
                  "\"brightness\":%u,"
                  "\"demo_active\":%s,"
                  "\"frames_received\":%llu}",
-                 MARKEE_WIDTH, MARKEE_HEIGHT, MARKEE_FRAME_BYTES,
-                 MARKEE_REFRESH_HZ, MARKEE_MATRIX_WIDTH_INCHES,
+                 disp->width, disp->height, disp->frame_bytes,
+                 MARKEE_REFRESH_HZ, phys_w_in,
                  (unsigned)display_get_brightness(disp),
                  display_is_demo_active(disp) ? "true" : "false",
                  (unsigned long long)display_get_frames_received(disp));
@@ -484,9 +478,15 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
                         contains_ci(req->accept, "application/octet-stream");
 
         if (want_raw) {
-            uint8_t raw[MARKEE_FRAME_BYTES];
-            display_get_raw_rgb(disp, raw);
-            send_response(fd, 200, "OK", "application/octet-stream", raw, sizeof(raw), ka);
+            uint8_t *raw = malloc(disp->frame_bytes);
+            if (!raw) {
+                send_json(fd, 500, "Internal Server Error",
+                          "{\"error\":\"out of memory\"}", ka);
+                return;
+            }
+            display_get_raw_rgb(disp, raw, disp->frame_bytes);
+            send_response(fd, 200, "OK", "application/octet-stream", raw, disp->frame_bytes, ka);
+            free(raw);
             return;
         }
 
@@ -507,8 +507,11 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         (strcmp(req->path, "/frame") == 0 || strcmp(req->path, "/frame.png") == 0 ||
          strcmp(req->path, "/frame.rgb") == 0 || strcmp(req->path, "/api/frame") == 0)) {
         if (!req->body || req->body_len == 0) {
-            send_json(fd, 400, "Bad Request",
-                      "{\"error\":\"empty body; send a 72x16 PNG or 3456 raw RGB bytes\"}", ka);
+            char err[192];
+            snprintf(err, sizeof(err),
+                     "{\"error\":\"empty body; send a %dx%d PNG or %zu raw RGB bytes\"}",
+                     disp->width, disp->height, disp->frame_bytes);
+            send_json(fd, 400, "Bad Request", err, ka);
             return;
         }
 
@@ -520,14 +523,18 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
             int aw = 0, ah = 0;
             MarkeeResult res = display_load_png(disp, req->body, req->body_len, &aw, &ah);
             if (res == MARKEE_OK) {
-                send_json(fd, 200, "OK",
-                          "{\"ok\":true,\"format\":\"png\",\"width\":72,\"height\":16}", ka);
+                char ok[128];
+                snprintf(ok, sizeof(ok),
+                         "{\"ok\":true,\"format\":\"png\",\"width\":%d,\"height\":%d}",
+                         disp->width, disp->height);
+                send_json(fd, 200, "OK", ok, ka);
                 return;
             }
             char err[192];
             if (res == MARKEE_ERR_WRONG_DIMENSIONS) {
                 snprintf(err, sizeof(err),
-                         "{\"error\":\"expected 72x16 PNG, got %dx%d\"}", aw, ah);
+                         "{\"error\":\"expected %dx%d PNG, got %dx%d\"}",
+                         disp->width, disp->height, aw, ah);
             } else {
                 snprintf(err, sizeof(err), "{\"error\":\"invalid PNG data\"}");
             }
@@ -535,18 +542,21 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
             return;
         }
 
-        /* Raw 24-bit RGB payload (72 * 16 * 3 = 3456 bytes) */
-        if (req->body_len == MARKEE_FRAME_BYTES) {
+        /* Raw 24-bit RGB payload (W * H * 3 bytes) */
+        if (req->body_len == disp->frame_bytes) {
             display_set_raw_rgb(disp, req->body, req->body_len, true);
-            send_json(fd, 200, "OK",
-                      "{\"ok\":true,\"format\":\"rgb24\",\"width\":72,\"height\":16}", ka);
+            char ok[128];
+            snprintf(ok, sizeof(ok),
+                     "{\"ok\":true,\"format\":\"rgb24\",\"width\":%d,\"height\":%d}",
+                     disp->width, disp->height);
+            send_json(fd, 200, "OK", ok, ka);
             return;
         }
 
         char err[192];
         snprintf(err, sizeof(err),
-                 "{\"error\":\"expected 72x16 PNG or %d raw RGB bytes, got %zu bytes\"}",
-                 MARKEE_FRAME_BYTES, req->body_len);
+                 "{\"error\":\"expected %dx%d PNG or %zu raw RGB bytes, got %zu bytes\"}",
+                 disp->width, disp->height, disp->frame_bytes, req->body_len);
         send_json(fd, 400, "Bad Request", err, ka);
         return;
     }
@@ -590,8 +600,11 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         }
         uint8_t r = 0, g = 0, b = 0;
         if (display_get_pixel(disp, x, y, &r, &g, &b) != MARKEE_OK) {
-            send_json(fd, 400, "Bad Request",
-                      "{\"error\":\"pixel coordinates out of range (0..71, 0..15)\"}", ka);
+            char err[128];
+            snprintf(err, sizeof(err),
+                     "{\"error\":\"pixel coordinates out of range (0..%d, 0..%d)\"}",
+                     disp->width - 1, disp->height - 1);
+            send_json(fd, 400, "Bad Request", err, ka);
             return;
         }
         char json[128];
@@ -620,8 +633,11 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
             return;
         }
         if (display_set_pixel(disp, x, y, r, g, b, true) != MARKEE_OK) {
-            send_json(fd, 400, "Bad Request",
-                      "{\"error\":\"pixel coordinates out of range (0..71, 0..15)\"}", ka);
+            char err[128];
+            snprintf(err, sizeof(err),
+                     "{\"error\":\"pixel coordinates out of range (0..%d, 0..%d)\"}",
+                     disp->width - 1, disp->height - 1);
+            send_json(fd, 400, "Bad Request", err, ka);
             return;
         }
         char json[128];
@@ -654,7 +670,6 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
             if (json_get_int(s, "brightness", &b) || json_get_int(s, "value", &b)) {
                 ok = true;
             } else {
-                /* Plain integer body, trimmed */
                 while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
                 char *end = NULL;
                 long v = strtol(s, &end, 10);
@@ -716,7 +731,7 @@ static void *client_thread_main(void *arg) {
         HttpRequest req;
         int rc = read_http_request(&reader, &req);
         if (rc == 0) {
-            break; /* Clean close or idle timeout */
+            break;
         }
         if (rc < 0) {
             send_json(fd, 400, "Bad Request", "{\"error\":\"malformed HTTP request\"}", false);
@@ -817,7 +832,6 @@ MarkeeServer *server_start(MarkeeDisplay *disp, const char *host, uint16_t port)
         return NULL;
     }
 
-    /* Query actual bound port (supports port == 0 ephemeral binding) */
     socklen_t alen = sizeof(addr);
     if (getsockname(fd, (struct sockaddr *)&addr, &alen) == 0) {
         port = ntohs(addr.sin_port);

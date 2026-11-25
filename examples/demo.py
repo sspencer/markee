@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Example client for markee (zero third-party dependencies).
 
+Automatically adapts to the display resolution reported by GET /info.
 Demonstrates:
   1. Reading device info from GET /info
-  2. Generating a 72x16 24-bit PNG in memory and uploading it to POST /frame
+  2. Generating a WxH 24-bit PNG in memory and uploading it to POST /frame
   3. Reading the displayed pixels back as a PNG from GET /frame
   4. Streaming a smooth 60 Hz 24-bit RGB plasma animation over a persistent socket
 """
@@ -16,11 +17,8 @@ import struct
 import time
 import zlib
 
-WIDTH = 72
-HEIGHT = 16
 
-
-def encode_png_rgb24(rgb_bytes: bytes, width: int = WIDTH, height: int = HEIGHT) -> bytes:
+def encode_png_rgb24(rgb_bytes: bytes, width: int, height: int) -> bytes:
     """Minimal stdlib-only 24-bit RGB PNG encoder."""
     def chunk(tag: bytes, data: bytes) -> bytes:
         crc = zlib.crc32(tag + data) & 0xFFFFFFFF
@@ -65,13 +63,13 @@ def hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
     )
 
 
-def make_gradient_frame(t: float) -> bytearray:
-    buf = bytearray(WIDTH * HEIGHT * 3)
+def make_gradient_frame(t: float, width: int, height: int) -> bytearray:
+    buf = bytearray(width * height * 3)
     i = 0
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
+    for y in range(height):
+        for x in range(width):
             v1 = math.sin(x * 0.14 + t * 2.4)
-            v2 = math.sin((y * 0.35 - t * 1.8))
+            v2 = math.sin(y * 0.35 - t * 1.8)
             v3 = math.sin((x * 0.09 + y * 0.22) + t * 1.5)
             hue = ((v1 + v2 + v3 + 3.0) / 6.0) * 360.0 + t * 40.0
             val = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(x * 0.18 - y * 0.3 + t * 3.0))
@@ -84,7 +82,7 @@ def make_gradient_frame(t: float) -> bytearray:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="markee 72x16 LED demo client")
+    parser = argparse.ArgumentParser(description="markee LED display demo client")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--seconds", type=float, default=6.0, help="Animation duration")
@@ -93,14 +91,16 @@ def main() -> None:
 
     conn = http.client.HTTPConnection(args.host, args.port, timeout=5)
 
-    # 1. Inspect device info
+    # 1. Inspect device info & discover resolution
     conn.request("GET", "/info")
     resp = conn.getresponse()
     info = json.loads(resp.read().decode())
+    width = int(info["width"])
+    height = int(info["height"])
     print("Connected to:", info)
 
-    # 2. Upload a 72x16 PNG
-    png_data = encode_png_rgb24(bytes(make_gradient_frame(0.0)))
+    # 2. Upload a WxH PNG
+    png_data = encode_png_rgb24(bytes(make_gradient_frame(0.0, width, height)), width, height)
     conn.request("POST", "/frame", body=png_data, headers={"Content-Type": "image/png"})
     resp = conn.getresponse()
     print("POST /frame (PNG):", resp.status, resp.read().decode())
@@ -116,14 +116,14 @@ def main() -> None:
         print(f"Saved readback PNG to {args.save}")
 
     # 4. Stream 60 Hz 24-bit RGB plasma over the same Keep-Alive TCP socket
-    print(f"Streaming 60 Hz 24-bit RGB animation for {args.seconds:.1f}s...")
+    print(f"Streaming 60 Hz {width}x{height} 24-bit RGB animation for {args.seconds:.1f}s...")
     t0 = time.monotonic()
     frames = 0
     while True:
         now = time.monotonic() - t0
         if now >= args.seconds:
             break
-        frame = make_gradient_frame(now)
+        frame = make_gradient_frame(now, width, height)
         conn.request(
             "PUT",
             "/frame.rgb",

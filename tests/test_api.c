@@ -69,7 +69,6 @@ static HttpResp do_request_on_fd(int fd, const char *method, const char *path,
         send_all(fd, body, body_len);
     }
 
-    /* Read headers until \r\n\r\n */
     size_t cap = 65536;
     uint8_t *raw = malloc(cap);
     assert(raw != NULL);
@@ -149,34 +148,58 @@ static HttpResp do_request(uint16_t port, const char *method, const char *path,
 }
 
 static void test_layout_sizing(void) {
-    /* 14" MacBook Pro style logical 1512 pts over 302 mm physical width */
-    MarkeeLayout L = renderer_compute_layout(0.0f, 1512, 302);
+    /* Default 72x16 @ zoom=1.0, square pixels matches 6.35" physical matrix width */
+    MarkeeLayout L = renderer_compute_layout(72, 16, 1.0f, MARKEE_PIXEL_SQUARE, 0.0f, 1512, 302);
     float inches = L.matrix_w / L.dpi;
     assert(fabsf(inches - MARKEE_MATRIX_WIDTH_INCHES) < 0.01f);
     assert(L.body_w > L.matrix_w);
     assert(L.body_h > L.matrix_h);
+    assert(L.pixel_shape == MARKEE_PIXEL_SQUARE);
+
+    /* Circle pixel mode preserves identical layout geometry */
+    MarkeeLayout Lc = renderer_compute_layout(72, 16, 1.0f, MARKEE_PIXEL_CIRCLE, 0.0f, 1512, 302);
+    assert(Lc.pixel_shape == MARKEE_PIXEL_CIRCLE);
+    assert(fabsf(Lc.matrix_w - L.matrix_w) < 0.001f);
+    assert(fabsf(Lc.matrix_h - L.matrix_h) < 0.001f);
+
+    /* Zoom scaling: 2.0x doubles matrix, cell pitch, and body dimensions */
+    MarkeeLayout Lz2 = renderer_compute_layout(72, 16, 2.0f, MARKEE_PIXEL_SQUARE, 0.0f, 1512, 302);
+    assert(fabsf(Lz2.matrix_w - L.matrix_w * 2.0f) < 0.01f);
+    assert(fabsf(Lz2.matrix_h - L.matrix_h * 2.0f) < 0.01f);
+    assert(fabsf(Lz2.cell_pitch - L.cell_pitch * 2.0f) < 0.01f);
+    assert(fabsf(Lz2.body_w - L.body_w * 2.0f) < 0.01f);
+    assert(fabsf(Lz2.body_h - L.body_h * 2.0f) < 0.01f);
+
+    /* Custom resolution preserves LED pitch and scales active matrix proportionally */
+    MarkeeLayout L144 = renderer_compute_layout(144, 32, 1.0f, MARKEE_PIXEL_SQUARE, 0.0f, 1512, 302);
+    assert(fabsf(L144.cell_pitch - L.cell_pitch) < 0.001f);
+    assert(fabsf(L144.matrix_w - L.matrix_w * 2.0f) < 0.01f);
+    assert(fabsf(L144.matrix_h - L.matrix_h * 2.0f) < 0.01f);
+
+    /* 144x32 @ zoom=0.5 fits back to 6.35" wide */
+    MarkeeLayout L144_half = renderer_compute_layout(144, 32, 0.5f, MARKEE_PIXEL_CIRCLE, 0.0f, 1512, 302);
+    assert(fabsf(L144_half.matrix_w - L.matrix_w) < 0.01f);
 
     /* Fallback when physical width is unavailable */
-    MarkeeLayout L2 = renderer_compute_layout(0.0f, 1920, 0);
+    MarkeeLayout L2 = renderer_compute_layout(72, 16, 1.0f, MARKEE_PIXEL_SQUARE, 0.0f, 1920, 0);
     assert(fabsf(L2.dpi - MARKEE_DEFAULT_DPI) < 0.01f);
     assert(fabsf(L2.matrix_w / L2.dpi - MARKEE_MATRIX_WIDTH_INCHES) < 0.01f);
 
     /* Manual DPI override */
-    MarkeeLayout L3 = renderer_compute_layout(144.0f, 1920, 500);
+    MarkeeLayout L3 = renderer_compute_layout(72, 16, 1.0f, MARKEE_PIXEL_SQUARE, 144.0f, 1920, 500);
     assert(fabsf(L3.dpi - 144.0f) < 0.01f);
     assert(fabsf(L3.matrix_w - 6.35f * 144.0f) < 0.01f);
-    printf("[PASS] layout physical sizing (6.35\" matrix)\n");
+    printf("[PASS] layout physical sizing, zoom, pixel shape, and custom resolution\n");
 }
 
 static void test_display_and_png_roundtrip(void) {
     MarkeeDisplay disp;
-    assert(display_init(&disp, false));
+    assert(display_init(&disp, 72, 16, false));
 
-    /* Fill with distinct 24-bit colors per pixel */
     uint8_t pattern[MARKEE_FRAME_BYTES];
-    for (int y = 0; y < MARKEE_HEIGHT; y++) {
-        for (int x = 0; x < MARKEE_WIDTH; x++) {
-            size_t idx = (size_t)(y * MARKEE_WIDTH + x) * 3;
+    for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 72; x++) {
+            size_t idx = (size_t)(y * 72 + x) * 3;
             pattern[idx + 0] = (uint8_t)((x * 3 + y * 5) & 0xFF);
             pattern[idx + 1] = (uint8_t)((y * 16 + x) & 0xFF);
             pattern[idx + 2] = (uint8_t)((255 - x * 3) & 0xFF);
@@ -184,24 +207,22 @@ static void test_display_and_png_roundtrip(void) {
     }
     assert(display_set_raw_rgb(&disp, pattern, sizeof(pattern), true) == MARKEE_OK);
 
-    /* Encode to PNG */
     uint8_t *png = NULL;
     size_t png_len = 0;
     assert(display_encode_png(&disp, &png, &png_len) == MARKEE_OK);
     assert(png != NULL && png_len > 32);
 
-    /* Clear, reload PNG, verify bit-exact 24-bit lossless recovery */
     display_clear(&disp, true);
     int aw = 0, ah = 0;
     assert(display_load_png(&disp, png, png_len, &aw, &ah) == MARKEE_OK);
-    assert(aw == MARKEE_WIDTH && ah == MARKEE_HEIGHT);
+    assert(aw == 72 && ah == 16);
 
     uint8_t readback[MARKEE_FRAME_BYTES];
-    display_get_raw_rgb(&disp, readback);
+    assert(display_get_raw_rgb(&disp, readback, sizeof(readback)));
     assert(memcmp(pattern, readback, MARKEE_FRAME_BYTES) == 0);
     display_free_buffer(png);
 
-    /* Reject a wrong-sized PNG (e.g., 16x16) */
+    /* Reject a wrong-sized PNG (16x16 on 72x16 display) */
     uint8_t small_px[16 * 16 * 3];
     memset(small_px, 0x77, sizeof(small_px));
     Image small_img = {
@@ -224,9 +245,8 @@ static void test_display_and_png_roundtrip(void) {
 
 static void test_http_socket_api(void) {
     MarkeeDisplay disp;
-    assert(display_init(&disp, true));
+    assert(display_init(&disp, 72, 16, true));
 
-    /* Bind to ephemeral port 0 so tests never collide with a running instance */
     MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
     assert(srv != NULL);
     uint16_t port = server_get_port(srv);
@@ -255,7 +275,7 @@ static void test_http_socket_api(void) {
     assert(r.status == 200);
     free(r.body);
 
-    /* 4. GET /frame -> PNG download, verify pixels */
+    /* 4. GET /frame -> PNG download */
     r = do_request(port, "GET", "/frame", NULL, NULL, 0);
     assert(r.status == 200);
     assert(strcmp(r.content_type, "image/png") == 0);
@@ -263,7 +283,7 @@ static void test_http_socket_api(void) {
     uint8_t *saved_png = r.body;
     size_t saved_png_len = r.body_len;
 
-    /* 5. POST /clear -> verify black */
+    /* 5. POST /clear */
     r = do_request(port, "POST", "/clear", NULL, NULL, 0);
     assert(r.status == 200);
     free(r.body);
@@ -272,7 +292,7 @@ static void test_http_socket_api(void) {
     assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
     assert(pr == 0 && pg == 0 && pb == 0);
 
-    /* 6. POST /frame with the previously downloaded PNG -> verify pixel restoration */
+    /* 6. POST /frame with PNG -> verify pixel restoration */
     r = do_request(port, "POST", "/frame", "image/png", saved_png, saved_png_len);
     assert(r.status == 200);
     free(r.body);
@@ -283,7 +303,7 @@ static void test_http_socket_api(void) {
     assert(display_get_pixel(&disp, 35, 7, &pr, &pg, &pb) == MARKEE_OK);
     assert(pr == 0x12 && pg == 0xab && pb == 0xef);
 
-    /* 7. Keep-alive persistent socket: raw RGB upload + raw RGB readback + brightness */
+    /* 7. Keep-alive persistent socket: raw RGB upload + readback + brightness */
     int kfd = connect_local(port);
     uint8_t raw_in[MARKEE_FRAME_BYTES];
     for (size_t i = 0; i < MARKEE_FRAME_BYTES; i++) {
@@ -315,7 +335,62 @@ static void test_http_socket_api(void) {
 
     server_stop(srv);
     display_destroy(&disp);
-    printf("[PASS] HTTP/TCP socket API (PNG I/O, raw RGB24, pixel/fill/clear/brightness, keep-alive)\n");
+    printf("[PASS] HTTP/TCP socket API (72x16 PNG I/O, raw RGB24, keep-alive)\n");
+}
+
+static void test_custom_resolution_api(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 32, 8, true));
+    display_tick_demo(&disp, 0.5);
+
+    MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+
+    /* GET /info reports 32x8 and 768 raw bytes */
+    HttpResp r = do_request(port, "GET", "/info", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"width\":32") != NULL);
+    assert(strstr((char *)r.body, "\"height\":8") != NULL);
+    assert(strstr((char *)r.body, "\"raw_frame_bytes\":768") != NULL);
+    free(r.body);
+
+    /* Out-of-bounds pixel rejected (32 >= 32) */
+    r = do_request(port, "POST", "/pixel?x=32&y=0&color=ffffff", NULL, NULL, 0);
+    assert(r.status == 400);
+    free(r.body);
+
+    /* Raw 32x8 RGB upload + PNG download + PNG re-upload roundtrip */
+    uint8_t raw[32 * 8 * 3];
+    for (size_t i = 0; i < sizeof(raw); i++) raw[i] = (uint8_t)((i * 19 + 7) & 0xFF);
+
+    r = do_request(port, "PUT", "/frame.rgb", "application/octet-stream", raw, sizeof(raw));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"width\":32,\"height\":8") != NULL);
+    free(r.body);
+
+    r = do_request(port, "GET", "/frame", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strcmp(r.content_type, "image/png") == 0);
+    uint8_t *png32x8 = r.body;
+    size_t png32x8_len = r.body_len;
+
+    r = do_request(port, "POST", "/clear", NULL, NULL, 0);
+    assert(r.status == 200);
+    free(r.body);
+
+    r = do_request(port, "POST", "/frame", "image/png", png32x8, png32x8_len);
+    assert(r.status == 200);
+    free(r.body);
+    free(png32x8);
+
+    uint8_t readback[32 * 8 * 3];
+    assert(display_get_raw_rgb(&disp, readback, sizeof(readback)));
+    assert(memcmp(raw, readback, sizeof(raw)) == 0);
+
+    server_stop(srv);
+    display_destroy(&disp);
+    printf("[PASS] custom resolution (32x8) API & PNG roundtrip\n");
 }
 
 int main(void) {
@@ -325,6 +400,7 @@ int main(void) {
     test_layout_sizing();
     test_display_and_png_roundtrip();
     test_http_socket_api();
+    test_custom_resolution_api();
 
     printf("\nAll markee tests passed!\n");
     return 0;

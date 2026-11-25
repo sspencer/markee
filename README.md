@@ -70,12 +70,25 @@ make clean
 
 | Flag | Description | Default |
 |---|---|---|
+| `-r, --resolution <WxH>` | LED matrix resolution in pixels (`1..1024` per axis, e.g. `128x32`, `64x64`) | `72x16` |
+| `-z, --zoom <factor>` | Display zoom multiplier (`0.1..10.0`, e.g. `0.5`, `1.5`, `2.0`) | `1.0` |
+| `--square` | Render each LED pixel as a square (matches default graphics) | On |
+| `--circle` | Render each LED pixel as a circle | Off |
+| `-s, --shape <style>` | Pixel display style: `square` or `circle` | `square` |
 | `-H, --host <ip>` | IP address to bind the API socket | `127.0.0.1` |
 | `-p, --port <port>` | TCP port (also reads `MARKEE_PORT` env var) | `8080` |
-| `--dpi <value>` | Override monitor logical DPI for 6.35" calibration | Auto-detected |
+| `--dpi <value>` | Override monitor logical DPI for physical sizing | Auto-detected |
 | `--blank` | Start with a blank black screen instead of the startup demo | Off |
 | `--headless` | Run API server only without opening a GUI window | Off |
-| `-h, --help` | Print usage information | — |
+| `-h, --help` | Print usage information and exit | — |
+
+```bash
+./markee                       # Default 72x16 square LEDs (~6.35" wide) at 1.0x zoom
+./markee --circle              # 72x16 circular LEDs
+./markee --circle --zoom 2     # Circular LEDs at 2x size
+./markee -r 128x32 -z 0.75     # Custom 128x32 LED matrix at 0.75x zoom
+./markee --help                # Print all CLI flags and shortcuts
+```
 
 ### Keyboard Shortcuts (GUI Mode)
 
@@ -83,7 +96,8 @@ make clean
 |---|---|
 | `C` | Clear display to black |
 | `D` | Toggle built-in startup animation |
-| `S` | Save the current 72×16 frame to `snapshot.png` |
+| `P` | Toggle pixel shape (`square` / `circle`) |
+| `S` | Save the current frame to `snapshot.png` |
 | `+` / `-` | Increase / decrease simulated brightness by 10% |
 | `Q` / `ESC` | Quit |
 
