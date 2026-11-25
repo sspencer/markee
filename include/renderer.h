@@ -62,13 +62,17 @@ typedef enum {
     MARKEE_CORNER_BOTTOM_LEFT,
     MARKEE_CORNER_BOTTOM_RIGHT,
     MARKEE_CORNER_TOP,
-    MARKEE_CORNER_BOTTOM
+    MARKEE_CORNER_BOTTOM,
+    MARKEE_CORNER_LEFT,
+    MARKEE_CORNER_RIGHT
 } MarkeeWindowCorner;
 
 typedef struct {
     bool always_on_top;
     bool borderless;
     bool has_position;
+    bool center_x;
+    bool center_y;
     int pos_x;
     int pos_y;
     MarkeeWindowCorner corner;
@@ -79,9 +83,17 @@ typedef struct {
 bool renderer_parse_case_theme(const char *s, MarkeeCaseTheme *out_theme);
 const char *renderer_case_theme_name(MarkeeCaseTheme theme);
 
-/* Parse a corner placement name ("center", "top-left"/"tl", "top-right"/"tr",
- * "bottom-left"/"bl", "bottom-right"/"br", "top", "bottom"). */
+/* Parse a named anchor / compass direction:
+ *   Compass:     nw, n, ne, w, c, e, sw, s, se (and full names north, northwest, ...)
+ *   Descriptive: top-left (tl), top (top-center), top-right (tr),
+ *                left (middle-left/center-left), center (middle), right (middle-right/center-right),
+ *                bottom-left (bl), bottom (bottom-center), bottom-right (br). */
 bool renderer_parse_corner(const char *s, MarkeeWindowCorner *out_corner);
+
+/* Parse a unified window position string into opts:
+ *   - Named anchor / compass direction (e.g. "nw", "se", "n", "w", "center", "top-right")
+ *   - Explicit pixel coordinates "X,Y" (either axis may be "center"/"c", e.g. "center,80") */
+bool renderer_parse_position(const char *s, MarkeeWindowOpts *out_opts);
 
 /* Compute initial window (x, y) on a mon_w x mon_h monitor from opts. */
 void renderer_compute_window_position(int mon_w, int mon_h, int win_w, int win_h,

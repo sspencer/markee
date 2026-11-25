@@ -2,6 +2,8 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 
 #include "raylib.h"
@@ -39,50 +41,123 @@ const char *renderer_case_theme_name(MarkeeCaseTheme theme) {
 
 bool renderer_parse_corner(const char *s, MarkeeWindowCorner *out_corner) {
     if (!s || !*s || !out_corner) return false;
-    if (strcasecmp(s, "center") == 0) {
+    if (strcasecmp(s, "center") == 0 || strcasecmp(s, "middle") == 0 || strcasecmp(s, "c") == 0) {
         *out_corner = MARKEE_CORNER_CENTER;
         return true;
     }
-    if (strcasecmp(s, "top-left") == 0 || strcasecmp(s, "topleft") == 0 || strcasecmp(s, "tl") == 0) {
+    if (strcasecmp(s, "nw") == 0 || strcasecmp(s, "northwest") == 0 ||
+        strcasecmp(s, "top-left") == 0 || strcasecmp(s, "topleft") == 0 || strcasecmp(s, "tl") == 0) {
         *out_corner = MARKEE_CORNER_TOP_LEFT;
         return true;
     }
-    if (strcasecmp(s, "top-right") == 0 || strcasecmp(s, "topright") == 0 || strcasecmp(s, "tr") == 0) {
+    if (strcasecmp(s, "ne") == 0 || strcasecmp(s, "northeast") == 0 ||
+        strcasecmp(s, "top-right") == 0 || strcasecmp(s, "topright") == 0 || strcasecmp(s, "tr") == 0) {
         *out_corner = MARKEE_CORNER_TOP_RIGHT;
         return true;
     }
-    if (strcasecmp(s, "bottom-left") == 0 || strcasecmp(s, "bottomleft") == 0 || strcasecmp(s, "bl") == 0) {
+    if (strcasecmp(s, "sw") == 0 || strcasecmp(s, "southwest") == 0 ||
+        strcasecmp(s, "bottom-left") == 0 || strcasecmp(s, "bottomleft") == 0 || strcasecmp(s, "bl") == 0) {
         *out_corner = MARKEE_CORNER_BOTTOM_LEFT;
         return true;
     }
-    if (strcasecmp(s, "bottom-right") == 0 || strcasecmp(s, "bottomright") == 0 || strcasecmp(s, "br") == 0) {
+    if (strcasecmp(s, "se") == 0 || strcasecmp(s, "southeast") == 0 ||
+        strcasecmp(s, "bottom-right") == 0 || strcasecmp(s, "bottomright") == 0 || strcasecmp(s, "br") == 0) {
         *out_corner = MARKEE_CORNER_BOTTOM_RIGHT;
         return true;
     }
-    if (strcasecmp(s, "top") == 0 || strcasecmp(s, "top-center") == 0) {
+    if (strcasecmp(s, "n") == 0 || strcasecmp(s, "north") == 0 ||
+        strcasecmp(s, "top") == 0 || strcasecmp(s, "top-center") == 0 || strcasecmp(s, "tc") == 0) {
         *out_corner = MARKEE_CORNER_TOP;
         return true;
     }
-    if (strcasecmp(s, "bottom") == 0 || strcasecmp(s, "bottom-center") == 0) {
+    if (strcasecmp(s, "s") == 0 || strcasecmp(s, "south") == 0 ||
+        strcasecmp(s, "bottom") == 0 || strcasecmp(s, "bottom-center") == 0 || strcasecmp(s, "bc") == 0) {
         *out_corner = MARKEE_CORNER_BOTTOM;
         return true;
     }
+    if (strcasecmp(s, "w") == 0 || strcasecmp(s, "west") == 0 ||
+        strcasecmp(s, "left") == 0 || strcasecmp(s, "middle-left") == 0 ||
+        strcasecmp(s, "center-left") == 0 || strcasecmp(s, "ml") == 0 || strcasecmp(s, "cl") == 0) {
+        *out_corner = MARKEE_CORNER_LEFT;
+        return true;
+    }
+    if (strcasecmp(s, "e") == 0 || strcasecmp(s, "east") == 0 ||
+        strcasecmp(s, "right") == 0 || strcasecmp(s, "middle-right") == 0 ||
+        strcasecmp(s, "center-right") == 0 || strcasecmp(s, "mr") == 0 || strcasecmp(s, "cr") == 0) {
+        *out_corner = MARKEE_CORNER_RIGHT;
+        return true;
+    }
     return false;
+}
+
+static bool parse_axis_coord(const char *s, size_t len, bool *out_centered, int *out_val) {
+    if (!s || len == 0 || len >= 32) return false;
+    char buf[32];
+    memcpy(buf, s, len);
+    buf[len] = '\0';
+    if (strcasecmp(buf, "center") == 0 || strcasecmp(buf, "middle") == 0 || strcasecmp(buf, "c") == 0) {
+        *out_centered = true;
+        *out_val = 0;
+        return true;
+    }
+    char *end = NULL;
+    long v = strtol(buf, &end, 10);
+    if (end == buf || *end != '\0' || v < -16384 || v > 16384) return false;
+    *out_centered = false;
+    *out_val = (int)v;
+    return true;
+}
+
+bool renderer_parse_position(const char *s, MarkeeWindowOpts *out_opts) {
+    if (!s || !*s || !out_opts) return false;
+
+    MarkeeWindowCorner corner;
+    if (renderer_parse_corner(s, &corner)) {
+        out_opts->has_position = false;
+        out_opts->center_x = false;
+        out_opts->center_y = false;
+        out_opts->corner = corner;
+        return true;
+    }
+
+    const char *comma = strchr(s, ',');
+    if (!comma || strchr(comma + 1, ',') != NULL) return false;
+
+    bool cx = false, cy = false;
+    int px = 0, py = 0;
+    if (!parse_axis_coord(s, (size_t)(comma - s), &cx, &px)) return false;
+    if (!parse_axis_coord(comma + 1, strlen(comma + 1), &cy, &py)) return false;
+
+    if (cx && cy) {
+        out_opts->has_position = false;
+        out_opts->center_x = false;
+        out_opts->center_y = false;
+        out_opts->corner = MARKEE_CORNER_CENTER;
+        return true;
+    }
+
+    out_opts->has_position = true;
+    out_opts->center_x = cx;
+    out_opts->center_y = cy;
+    out_opts->pos_x = px;
+    out_opts->pos_y = py;
+    return true;
 }
 
 void renderer_compute_window_position(int mon_w, int mon_h, int win_w, int win_h,
                                       const MarkeeWindowOpts *opts,
                                       int *out_x, int *out_y) {
     int x = 0, y = 0;
+    int cx = (mon_w > win_w) ? (mon_w - win_w) / 2 : 0;
+    int cy = (mon_h > win_h) ? (mon_h - win_h) / 2 : 0;
+
     if (opts && opts->has_position) {
-        x = opts->pos_x;
-        y = opts->pos_y;
+        x = opts->center_x ? cx : opts->pos_x;
+        y = opts->center_y ? cy : opts->pos_y;
     } else if (mon_w > 0 && mon_h > 0) {
         const int pad_x = 24;
         const int pad_top = 48;    /* clearance for OS menu bar */
         const int pad_bottom = 64; /* clearance for dock / taskbar */
-        int cx = mon_w > win_w ? (mon_w - win_w) / 2 : 0;
-        int cy = mon_h > win_h ? (mon_h - win_h) / 2 : 0;
         int rx = mon_w > win_w + pad_x ? mon_w - win_w - pad_x : 0;
         int by = mon_h > win_h + pad_bottom ? mon_h - win_h - pad_bottom : 0;
         int ty = mon_h > win_h + pad_top ? pad_top : 0;
@@ -96,6 +171,8 @@ void renderer_compute_window_position(int mon_w, int mon_h, int win_w, int win_h
             case MARKEE_CORNER_BOTTOM_RIGHT: x = rx; y = by; break;
             case MARKEE_CORNER_TOP:          x = cx; y = ty; break;
             case MARKEE_CORNER_BOTTOM:       x = cx; y = by; break;
+            case MARKEE_CORNER_LEFT:         x = lx; y = cy; break;
+            case MARKEE_CORNER_RIGHT:        x = rx; y = cy; break;
             case MARKEE_CORNER_CENTER:
             default:                         x = cx; y = cy; break;
         }

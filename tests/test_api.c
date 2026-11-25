@@ -196,32 +196,71 @@ static void test_layout_sizing(void) {
     assert(fabsf(L3.dpi - 144.0f) < 0.01f);
     assert(fabsf(L3.matrix_w - 6.35f * 144.0f) < 0.01f);
 
-    /* Corner parsing and window placement */
+    /* Compass, anchor, and unified --position parsing & window placement */
     MarkeeWindowCorner c;
     assert(renderer_parse_corner("center", &c) && c == MARKEE_CORNER_CENTER);
+    assert(renderer_parse_corner("middle", &c) && c == MARKEE_CORNER_CENTER);
+    assert(renderer_parse_corner("c", &c) && c == MARKEE_CORNER_CENTER);
+    assert(renderer_parse_corner("NW", &c) && c == MARKEE_CORNER_TOP_LEFT);
+    assert(renderer_parse_corner("northwest", &c) && c == MARKEE_CORNER_TOP_LEFT);
     assert(renderer_parse_corner("top-right", &c) && c == MARKEE_CORNER_TOP_RIGHT);
+    assert(renderer_parse_corner("NE", &c) && c == MARKEE_CORNER_TOP_RIGHT);
     assert(renderer_parse_corner("TR", &c) && c == MARKEE_CORNER_TOP_RIGHT);
     assert(renderer_parse_corner("bottom-left", &c) && c == MARKEE_CORNER_BOTTOM_LEFT);
+    assert(renderer_parse_corner("sw", &c) && c == MARKEE_CORNER_BOTTOM_LEFT);
     assert(renderer_parse_corner("br", &c) && c == MARKEE_CORNER_BOTTOM_RIGHT);
+    assert(renderer_parse_corner("SE", &c) && c == MARKEE_CORNER_BOTTOM_RIGHT);
+    assert(renderer_parse_corner("N", &c) && c == MARKEE_CORNER_TOP);
     assert(renderer_parse_corner("top", &c) && c == MARKEE_CORNER_TOP);
+    assert(renderer_parse_corner("S", &c) && c == MARKEE_CORNER_BOTTOM);
     assert(renderer_parse_corner("bottom", &c) && c == MARKEE_CORNER_BOTTOM);
-    assert(!renderer_parse_corner("middle", &c));
+    assert(renderer_parse_corner("W", &c) && c == MARKEE_CORNER_LEFT);
+    assert(renderer_parse_corner("left", &c) && c == MARKEE_CORNER_LEFT);
+    assert(renderer_parse_corner("middle-left", &c) && c == MARKEE_CORNER_LEFT);
+    assert(renderer_parse_corner("E", &c) && c == MARKEE_CORNER_RIGHT);
+    assert(renderer_parse_corner("right", &c) && c == MARKEE_CORNER_RIGHT);
+    assert(renderer_parse_corner("center-right", &c) && c == MARKEE_CORNER_RIGHT);
+    assert(!renderer_parse_corner("upward", &c));
 
     int wx = -1, wy = -1;
     MarkeeWindowOpts opts = {0};
-    opts.corner = MARKEE_CORNER_TOP_RIGHT;
+    assert(renderer_parse_position("NE", &opts) && !opts.has_position && opts.corner == MARKEE_CORNER_TOP_RIGHT);
     renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
     assert(wx == 1920 - 600 - 24 && wy == 48);
 
-    opts.corner = MARKEE_CORNER_BOTTOM_LEFT;
+    assert(renderer_parse_position("sw", &opts) && !opts.has_position && opts.corner == MARKEE_CORNER_BOTTOM_LEFT);
     renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
     assert(wx == 24 && wy == 1080 - 160 - 64);
 
-    opts.has_position = true;
-    opts.pos_x = 120;
-    opts.pos_y = 340;
+    /* Cardinal midpoints: N (horizontal center, top), S (horizontal center, bottom),
+     * W (left, vertical center), E (right, vertical center) */
+    assert(renderer_parse_position("N", &opts) && opts.corner == MARKEE_CORNER_TOP);
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == (1920 - 600) / 2 && wy == 48);
+
+    assert(renderer_parse_position("W", &opts) && opts.corner == MARKEE_CORNER_LEFT);
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == 24 && wy == (1080 - 160) / 2);
+
+    assert(renderer_parse_position("E", &opts) && opts.corner == MARKEE_CORNER_RIGHT);
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == 1920 - 600 - 24 && wy == (1080 - 160) / 2);
+
+    /* Explicit X,Y and mixed center coordinates */
+    assert(renderer_parse_position("120,340", &opts) && opts.has_position && !opts.center_x && !opts.center_y);
     renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
     assert(wx == 120 && wy == 340);
+
+    assert(renderer_parse_position("center,80", &opts) && opts.has_position && opts.center_x && !opts.center_y);
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == (1920 - 600) / 2 && wy == 80);
+
+    assert(renderer_parse_position("40,center", &opts) && opts.has_position && !opts.center_x && opts.center_y);
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == 40 && wy == (1080 - 160) / 2);
+
+    assert(!renderer_parse_position("120,340,5", &opts));
+    assert(!renderer_parse_position("bogus", &opts));
 
     /* Enclosure case themes */
     MarkeeCaseTheme th;
@@ -2482,6 +2521,14 @@ static void test_ini_config(void) {
     assert(cfg.corner == MARKEE_CORNER_TOP_RIGHT);
     assert(cfg.case_theme == MARKEE_CASE_CHARCOAL);
     assert(fabs(cfg.idle_dim_sec - 120.0) < 0.01 && cfg.idle_brightness == 15);
+
+    /* Compass and mixed position values in INI config */
+    MarkeeConfig pcfg;
+    markee_config_defaults(&pcfg);
+    assert(markee_config_parse_string("position = SE\n", &pcfg, err, sizeof(err)));
+    assert(!pcfg.has_position && pcfg.corner == MARKEE_CORNER_BOTTOM_RIGHT);
+    assert(markee_config_parse_string("position = center,90\n", &pcfg, err, sizeof(err)));
+    assert(pcfg.has_position && pcfg.center_x && !pcfg.center_y && pcfg.pos_y == 90);
 
     /* Reject unknown key and bad value */
     MarkeeConfig bad;

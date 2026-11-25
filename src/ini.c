@@ -30,6 +30,8 @@ void markee_config_defaults(MarkeeConfig *cfg) {
     cfg->always_on_top = false;
     cfg->borderless = false;
     cfg->has_position = false;
+    cfg->center_x = false;
+    cfg->center_y = false;
     cfg->pos_x = 0;
     cfg->pos_y = 0;
     cfg->corner = MARKEE_CORNER_CENTER;
@@ -93,20 +95,6 @@ static bool parse_res(const char *s, int *out_w, int *out_h) {
         h < MARKEE_MIN_DIM || h > MARKEE_MAX_DIM) return false;
     *out_w = (int)w;
     *out_h = (int)h;
-    return true;
-}
-
-static bool parse_pos(const char *s, int *out_x, int *out_y) {
-    char *sep = NULL;
-    long x = strtol(s, &sep, 10);
-    if (sep == s || *sep != ',') return false;
-    if (sep[1] == '\0') return false;
-    char *end = NULL;
-    long y = strtol(sep + 1, &end, 10);
-    if (end == sep + 1 || *end != '\0') return false;
-    if (x < -16384 || x > 16384 || y < -16384 || y > 16384) return false;
-    *out_x = (int)x;
-    *out_y = (int)y;
     return true;
 }
 
@@ -257,17 +245,30 @@ bool markee_config_parse_string(const char *text, MarkeeConfig *cfg,
         } else if (strcasecmp(key, "position") == 0 || strcasecmp(key, "pos") == 0) {
             if (*val == '\0' || strcasecmp(val, "auto") == 0 || strcasecmp(val, "none") == 0) {
                 cfg->has_position = false;
-            } else if (parse_pos(val, &cfg->pos_x, &cfg->pos_y)) {
-                cfg->has_position = true;
+                cfg->center_x = false;
+                cfg->center_y = false;
             } else {
-                if (err_buf && err_size > 0) snprintf(err_buf, err_size, "line %d: invalid position '%s'", line_no, val);
-                return false;
+                MarkeeWindowOpts tmp = {0};
+                if (renderer_parse_position(val, &tmp)) {
+                    cfg->has_position = tmp.has_position;
+                    cfg->center_x = tmp.center_x;
+                    cfg->center_y = tmp.center_y;
+                    cfg->pos_x = tmp.pos_x;
+                    cfg->pos_y = tmp.pos_y;
+                    if (!tmp.has_position) cfg->corner = tmp.corner;
+                } else {
+                    if (err_buf && err_size > 0) snprintf(err_buf, err_size, "line %d: invalid position '%s'", line_no, val);
+                    return false;
+                }
             }
         } else if (strcasecmp(key, "corner") == 0) {
             if (!renderer_parse_corner(val, &cfg->corner)) {
                 if (err_buf && err_size > 0) snprintf(err_buf, err_size, "line %d: invalid corner '%s'", line_no, val);
                 return false;
             }
+            cfg->has_position = false;
+            cfg->center_x = false;
+            cfg->center_y = false;
         } else if (strcasecmp(key, "case") == 0 || strcasecmp(key, "case_theme") == 0) {
             if (!renderer_parse_case_theme(val, &cfg->case_theme)) {
                 if (err_buf && err_size > 0) snprintf(err_buf, err_size, "line %d: invalid case theme '%s'", line_no, val);

@@ -22,6 +22,8 @@ typedef struct {
     bool always_on_top;
     bool borderless;
     bool has_position;
+    bool center_x;
+    bool center_y;
     int pos_x;
     int pos_y;
     MarkeeWindowCorner corner;

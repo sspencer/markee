@@ -75,22 +75,6 @@ static bool parse_dpi(const char *s, float *out_dpi) {
     return true;
 }
 
-static bool parse_position(const char *s, int *out_x, int *out_y) {
-    if (!s || !*s || !out_x || !out_y) return false;
-    char *sep = NULL;
-    long x = strtol(s, &sep, 10);
-    if (sep == s || *sep != ',') return false;
-    const char *y_start = sep + 1;
-    if (*y_start == '\0') return false;
-    char *end = NULL;
-    long y = strtol(y_start, &end, 10);
-    if (end == y_start || *end != '\0') return false;
-    if (x < -16384 || x > 16384 || y < -16384 || y > 16384) return false;
-    *out_x = (int)x;
-    *out_y = (int)y;
-    return true;
-}
-
 static bool parse_pixel_shape(const char *s, MarkeePixelShape *out_shape) {
     if (!s || !out_shape) return false;
     if (strcmp(s, "square") == 0) {
@@ -125,10 +109,12 @@ static void print_usage(const char *prog) {
            "      --always-on-top     Keep the GUI window above other windows (alias: --topmost)\n"
            "      --borderless        Floating widget mode: hide titlebar, transparent background,\n"
            "                          click-and-drag enclosure to move (alias: --frameless)\n"
-           "      --position <X,Y>    Initial window position in screen coordinates (alias: --pos)\n"
-           "      --corner <place>    Snap initial window to monitor corner/edge: center,\n"
-           "                          top-left (tl), top-right (tr), bottom-left (bl),\n"
-           "                          bottom-right (br), top, bottom\n"
+           "      --position <pos>    Initial window position: compass direction (nw, n, ne, w,\n"
+           "                          c, e, sw, s, se), edge/corner name (top-left, top, left,\n"
+           "                          center, right, bottom-right, ...), or coordinates X,Y\n"
+           "                          (either axis may be 'center', e.g. center,80). Alias: --pos\n"
+           "      --corner <place>    Alias for named --position anchors (nw, n, ne, w, c, e,\n"
+           "                          sw, s, se, top-left, top, left, center, right, bottom, ...)\n"
            "      --case <theme>      Enclosure color theme: white, charcoal, orange, retro\n"
            "                          (default: white)\n"
            "      --idle-dim <sec>    Dim GUI brightness after N seconds with no API writes\n"
@@ -140,8 +126,15 @@ static void print_usage(const char *prog) {
            "                          ~/.config/markee/config.ini if present)\n"
            "      --no-config         Ignore ~/.config/markee/config.ini\n"
            "      --save-position     Save window X,Y position to config file on exit\n"
-           "  -h, --help              Show this help message and exit\n\n"
-           "Keyboard shortcuts (GUI mode):\n"
+           "  -h, --help              Show this help message and exit\n\n",
+           prog,
+           MARKEE_DEFAULT_WIDTH, MARKEE_DEFAULT_HEIGHT,
+           MARKEE_DEFAULT_WIDTH, MARKEE_DEFAULT_HEIGHT,
+           MARKEE_MIN_DIM, MARKEE_MAX_DIM,
+           MARKEE_DEFAULT_ZOOM, MARKEE_MIN_ZOOM, MARKEE_MAX_ZOOM,
+           MARKEE_DEFAULT_HOST, MARKEE_DEFAULT_PORT);
+
+    printf("Keyboard shortcuts (GUI mode):\n"
            "  1 / 2 / 3               Preview alert sounds (ding, chime, bell)\n"
            "  C                       Clear display\n"
            "  D                       Toggle built-in demo animation\n"
@@ -167,12 +160,6 @@ static void print_usage(const char *prog) {
            "  %s --circle --zoom 2         # 72x16 circular LEDs at 2x size\n"
            "  %s -m \"#ffbf00\"              # Monochrome amber phosphor filter\n"
            "  %s -r 128x32 -z 0.75         # Custom 128x32 LED matrix at 0.75x zoom\n",
-           prog,
-           MARKEE_DEFAULT_WIDTH, MARKEE_DEFAULT_HEIGHT,
-           MARKEE_DEFAULT_WIDTH, MARKEE_DEFAULT_HEIGHT,
-           MARKEE_MIN_DIM, MARKEE_MAX_DIM,
-           MARKEE_DEFAULT_ZOOM, MARKEE_MIN_ZOOM, MARKEE_MAX_ZOOM,
-           MARKEE_DEFAULT_HOST, MARKEE_DEFAULT_PORT,
            prog, prog, prog, prog, prog, prog, prog,
            prog, prog, prog, prog);
 }
@@ -251,6 +238,8 @@ int main(int argc, char **argv) {
     bool always_on_top = cfg.always_on_top;
     bool borderless = cfg.borderless;
     bool has_position = cfg.has_position;
+    bool center_x = cfg.center_x;
+    bool center_y = cfg.center_y;
     int pos_x = cfg.pos_x, pos_y = cfg.pos_y;
     MarkeeWindowCorner corner = cfg.corner;
     MarkeeCaseTheme case_theme = cfg.case_theme;
@@ -320,18 +309,27 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--borderless") == 0 || strcmp(argv[i], "--frameless") == 0) {
             borderless = true;
         } else if ((strcmp(argv[i], "--position") == 0 || strcmp(argv[i], "--pos") == 0) && i + 1 < argc) {
-            if (!parse_position(argv[++i], &pos_x, &pos_y)) {
-                fprintf(stderr, "Invalid position '%s' (expected X,Y integers)\n", argv[i]);
+            MarkeeWindowOpts parsed_pos = {0};
+            if (!renderer_parse_position(argv[++i], &parsed_pos)) {
+                fprintf(stderr, "Invalid position '%s' (expected nw/n/ne/w/c/e/sw/s/se, top-left/..., or X,Y)\n",
+                        argv[i]);
                 return 1;
             }
-            has_position = true;
+            has_position = parsed_pos.has_position;
+            center_x = parsed_pos.center_x;
+            center_y = parsed_pos.center_y;
+            pos_x = parsed_pos.pos_x;
+            pos_y = parsed_pos.pos_y;
+            if (!parsed_pos.has_position) corner = parsed_pos.corner;
         } else if (strcmp(argv[i], "--corner") == 0 && i + 1 < argc) {
             if (!renderer_parse_corner(argv[++i], &corner)) {
-                fprintf(stderr, "Invalid corner '%s' (expected center, top-left, top-right, bottom-left, bottom-right, top, or bottom)\n",
+                fprintf(stderr, "Invalid corner '%s' (expected nw, n, ne, w, c, e, sw, s, se, top-left, top, left, center, right, bottom, ...)\n",
                         argv[i]);
                 return 1;
             }
             has_position = false;
+            center_x = false;
+            center_y = false;
         } else if (strcmp(argv[i], "--case") == 0 && i + 1 < argc) {
             if (!renderer_parse_case_theme(argv[++i], &case_theme)) {
                 fprintf(stderr, "Invalid case theme '%s' (expected white, charcoal, orange, or retro)\n",
@@ -474,6 +472,8 @@ int main(int argc, char **argv) {
             .always_on_top = always_on_top,
             .borderless = borderless,
             .has_position = has_position,
+            .center_x = center_x,
+            .center_y = center_y,
             .pos_x = pos_x,
             .pos_y = pos_y,
             .corner = corner,
