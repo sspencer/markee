@@ -249,3 +249,7 @@ markee/
 └── tests/
     └── test_api.c       # Unit tests and live socket API integration tests (`make test`)
 ```
+
+## License
+
+[MIT](LICENSE) © 2026 Steven Spencer
