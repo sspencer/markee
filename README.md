@@ -4,6 +4,12 @@ A C11 + [raylib](https://www.raylib.com/) hardware simulator for a **72×16, 24-
 
 `markee` recreates the front LED display inside a molded plastic enclosure calibrated to appear **~6.35 inches wide** on screen, refreshes at **60 Hz**, and exposes a lightweight **HTTP/1.1 over TCP socket API** so any script or program can push 72×16 PNGs (or raw 24-bit RGB frames) to the display and read back the currently displayed pixels as a PNG.
 
+## Inspiration
+
+markee was inspired by the [BUSY Bar](https://busy.app/products/busy-bar), a real hardware LED display. I wanted to see and imagine how the device works, so I quickly vibe coded a software version of it.
+
+markee is an independent hobby project. It is **not** an emulator for the BUSY Bar, and its HTTP API is **not compatible** with the official BUSY Bar API or its Python library, [busylib](https://busy-app.github.io/busylib-py/). Code written for one will not work with the other. For the real device, see the [BUSY Bar product page](https://busy.app/products/busy-bar) and the [busylib documentation](https://busy-app.github.io/busylib-py/).
+
 ## Features
 
 - **72×16 LED matrix, 24-bit true color** (16,777,216 colors, 8 bits per R/G/B channel)
