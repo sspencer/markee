@@ -6,7 +6,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 
 ## 1. Desktop Widget & GUI Experience
 
-- [ ] **Always-on-top mode (`--always-on-top`, hotkey `T`):** Keep the LED bar visible above editors and terminals (`FLAG_WINDOW_TOPMOST`) so it works as a true glanceable desk status display.
+- [x] **Always-on-top mode (`--always-on-top`, hotkey `T`):** Keep the LED bar visible above editors and terminals (`FLAG_WINDOW_TOPMOST`) so it works as a true glanceable desk status display.
 - [ ] **Borderless floating widget (`--borderless`):** Hide the OS titlebar and render only the molded enclosure with a transparent window background (`FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_TRANSPARENT`) plus click-and-drag repositioning.
 - [ ] **Window placement & persistence (`--position X,Y`, `--corner top-right|bottom-right|...`):** Park the bar in a predictable corner on launch and optionally remember its last position.
 - [ ] **Enclosure color themes (`--case white|charcoal|orange|retro`):** Support alternate shell finishes (e.g., matte black, classic off-white, bright accent) via CLI flag or hotkey.

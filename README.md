@@ -100,6 +100,7 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 | `-H, --host <addr>` | Bind address: IPv4, IPv6 (`::1`, `::`), or hostname (`localhost`). Note: the API has **no authentication** | `127.0.0.1` |
 | `-p, --port <port>` | TCP port (`0..65535`; `0` picks a free ephemeral port). Overrides `MARKEE_PORT` | `8080` (or `$MARKEE_PORT`) |
 | `--dpi <value>` | Override monitor logical DPI (`> 0`) if EDID physical sizing is wrong | Auto-detected (fallback `110`) |
+| `--always-on-top` | Keep the GUI window floating above other windows. Alias: `--topmost` | Off |
 | `--demo` | Start with the built-in 60 Hz demo animation instead of a blank display | Off |
 | `--mute` | Disable alert sound playback. Alias: `--no-audio` | Off |
 | `--headless` | Run the API server without a GUI window (60 Hz demo, scrolling text, `GET /frame`, and alert audio still run) | Off |
@@ -128,6 +129,7 @@ Available when running in GUI mode:
 | `M` | Toggle the monochrome filter (reuses last tint color, or amber `#ffbf00`) |
 | `P` | Toggle pixel shape (`square` / `circle`) |
 | `S` | Save current frame to `snapshot.png` in the working directory (includes monochrome filter if on) |
+| `T` | Toggle always-on-top window mode |
 | `+` (`=`) / `-` | Increase or decrease simulated brightness by 10% (keypad `+`/`-` also work) |
 | `Q` / `ESC` | Quit |
 

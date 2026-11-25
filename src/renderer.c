@@ -78,12 +78,20 @@ MarkeeLayout renderer_compute_layout(int width, int height, float zoom,
     return L;
 }
 
-MarkeeLayout renderer_init_window(int width, int height, float zoom,
-                                  MarkeePixelShape pixel_shape,
-                                  const char *host, uint16_t port,
-                                  float override_dpi) {
+MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
+                                     MarkeePixelShape pixel_shape,
+                                     const char *host, uint16_t port,
+                                     float override_dpi,
+                                     const MarkeeWindowOpts *opts) {
+    MarkeeWindowOpts def = {0};
+    if (!opts) opts = &def;
+
     SetTraceLogLevel(LOG_WARNING);
-    SetConfigFlags(FLAG_WINDOW_HIGHDPI | FLAG_MSAA_4X_HINT);
+    unsigned int flags = FLAG_WINDOW_HIGHDPI | FLAG_MSAA_4X_HINT;
+    if (opts->always_on_top) {
+        flags |= FLAG_WINDOW_TOPMOST;
+    }
+    SetConfigFlags(flags);
 
     /* Initial window using fallback DPI so GLFW initializes monitor metrics cleanly */
     MarkeeLayout initial = renderer_compute_layout(width, height, zoom, pixel_shape, override_dpi, 0, 0);
@@ -112,15 +120,32 @@ MarkeeLayout renderer_init_window(int width, int height, float zoom,
     }
 
     printf("Display calibrated: %dx%d LEDs, zoom=%.2fx, pixels=%s, monitor=%dx%d (%d mm physical), "
-           "logical DPI=%.1f, LED matrix=%.1fx%.1f pts (%.2f\" wide), refresh=%d Hz\n",
+           "logical DPI=%.1f, LED matrix=%.1fx%.1f pts (%.2f\" wide), refresh=%d Hz%s\n",
            layout.width, layout.height, layout.zoom,
            layout.pixel_shape == MARKEE_PIXEL_CIRCLE ? "circle" : "square",
            mon_w, mon_h, phys_w_mm, layout.dpi,
            layout.matrix_w, layout.matrix_h, layout.matrix_w / layout.dpi,
-           MARKEE_REFRESH_HZ);
+           MARKEE_REFRESH_HZ,
+           opts->always_on_top ? ", always-on-top" : "");
     fflush(stdout);
 
     return layout;
+}
+
+MarkeeLayout renderer_init_window(int width, int height, float zoom,
+                                  MarkeePixelShape pixel_shape,
+                                  const char *host, uint16_t port,
+                                  float override_dpi) {
+    return renderer_init_window_ex(width, height, zoom, pixel_shape,
+                                   host, port, override_dpi, NULL);
+}
+
+void renderer_set_always_on_top(bool enabled) {
+    if (enabled) {
+        SetWindowState(FLAG_WINDOW_TOPMOST);
+    } else {
+        ClearWindowState(FLAG_WINDOW_TOPMOST);
+    }
 }
 
 static uint8_t clamp_u8(int v) {

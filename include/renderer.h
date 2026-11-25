@@ -45,6 +45,10 @@ typedef struct {
     float cell_pitch;
 } MarkeeLayout;
 
+typedef struct {
+    bool always_on_top;
+} MarkeeWindowOpts;
+
 /* Compute layout for resolution (width x height), zoom factor, pixel shape, and logical DPI
  * (or auto-detect DPI when override_dpi <= 0). */
 MarkeeLayout renderer_compute_layout(int width, int height, float zoom,
@@ -57,6 +61,16 @@ MarkeeLayout renderer_init_window(int width, int height, float zoom,
                                   MarkeePixelShape pixel_shape,
                                   const char *host, uint16_t port,
                                   float override_dpi);
+
+/* Extended window initializer accepting window behavior options (always-on-top, etc.). */
+MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
+                                     MarkeePixelShape pixel_shape,
+                                     const char *host, uint16_t port,
+                                     float override_dpi,
+                                     const MarkeeWindowOpts *opts);
+
+/* Toggle the OS always-on-top window flag at runtime. */
+void renderer_set_always_on_top(bool enabled);
 
 /* Draw one frame of the plastic-encased LED display. */
 void renderer_draw(const MarkeeLayout *layout,

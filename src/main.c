@@ -103,6 +103,7 @@ static void print_usage(const char *prog) {
            "  -H, --host <addr>       Bind address: IPv4, IPv6, or hostname (default: %s)\n"
            "  -p, --port <port>       TCP port to listen on (default: %d, or MARKEE_PORT)\n"
            "      --dpi <value>       Override monitor logical DPI for physical sizing\n"
+           "      --always-on-top     Keep the GUI window above other windows (alias: --topmost)\n"
            "      --demo              Start with the built-in demo animation (default: blank)\n"
            "      --mute              Disable alert sound playback (alias: --no-audio)\n"
            "      --headless          Run API server only without opening a GUI window\n"
@@ -114,6 +115,7 @@ static void print_usage(const char *prog) {
            "  M                       Toggle monochrome filter on/off (default amber #ffbf00)\n"
            "  P                       Toggle pixel shape (square / circle)\n"
            "  S                       Save current frame to snapshot.png\n"
+           "  T                       Toggle always-on-top window mode\n"
            "  + / -                   Adjust brightness (+/- 10%%)\n"
            "  Q / ESC                 Quit\n\n"
            "Examples:\n"
@@ -162,6 +164,7 @@ int main(int argc, char **argv) {
     const char *host = MARKEE_DEFAULT_HOST;
     uint16_t port = MARKEE_DEFAULT_PORT;
     float override_dpi = 0.0f;
+    bool always_on_top = false;
     bool start_demo = false;
     bool mute = false;
     bool headless = false;
@@ -215,6 +218,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Invalid DPI value '%s' (expected a positive number)\n", argv[i]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--always-on-top") == 0 || strcmp(argv[i], "--topmost") == 0) {
+            always_on_top = true;
         } else if (strcmp(argv[i], "--demo") == 0) {
             start_demo = true;
         } else if (strcmp(argv[i], "--blank") == 0) {
@@ -312,8 +317,12 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        MarkeeLayout layout = renderer_init_window(width, height, zoom, pixel_shape,
-                                                   host, actual_port, override_dpi);
+        MarkeeWindowOpts win_opts = {
+            .always_on_top = always_on_top
+        };
+        MarkeeLayout layout = renderer_init_window_ex(width, height, zoom, pixel_shape,
+                                                      host, actual_port, override_dpi,
+                                                      &win_opts);
 
         while (!WindowShouldClose() && !atomic_load(&g_quit)) {
             if (IsKeyPressed(KEY_Q)) break;
@@ -354,6 +363,10 @@ int main(int argc, char **argv) {
             }
             if (IsKeyPressed(KEY_S)) {
                 save_snapshot_png(&display, "snapshot.png");
+            }
+            if (IsKeyPressed(KEY_T)) {
+                always_on_top = !always_on_top;
+                renderer_set_always_on_top(always_on_top);
             }
             if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) {
                 uint8_t b = display_get_brightness(&display);
