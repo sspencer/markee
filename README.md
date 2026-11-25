@@ -70,6 +70,8 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | `make sanitize` | Build and run `./test_api_san` under AddressSanitizer + UndefinedBehaviorSanitizer |
 | `make fuzz-smoke` | Build and run standalone ASan/UBSan fuzz harnesses for GIF, JSON, `/draw`, and HTTP parsers |
 | `make fuzz` | Build native LLVM libFuzzer binaries in `build/fuzz/` (`CC=clang`) |
+| `make app` | Build a native macOS `build/Markee.app` bundle (see [`packaging/README.md`](packaging/README.md)) |
+| `make tarball` | Build a versioned release tarball in `build/` |
 | `make debug` / `make release` | Clean rebuild with `-O0 -g` or `-O3` |
 | `make install` / `make uninstall` | Install or remove in `~/.local/bin` (falls back to `/usr/local/bin`; override with `PREFIX=` / `DESTDIR=`) |
 | `make clean` / `make distclean` | Remove build artifacts (`distclean` also deletes `snapshot.png`) |
@@ -276,31 +278,45 @@ Builds and runs `./test_api` with no GUI window and silent audio. The suite cove
 
 ```text
 markee/
-├── Makefile             # Build, test, run, install, clean targets (`make help`)
-├── README.md            # Overview, build, and CLI usage
+├── .github/workflows/
+│   └── ci.yml           # macOS + Linux CI (strict -Werror, tests, ASan/UBSan, fuzz smoke)
+├── Makefile             # Build, test, sanitize, fuzz-smoke, app, tarball, install (`make help`)
+├── README.md            # Overview, build, config, and CLI usage
 ├── docs/
 │   ├── API.md           # Complete HTTP API reference and recipes
+│   ├── ideas.md         # Completed product & engineering roadmap
 │   └── demo.png         # Screenshot of markee running in --demo mode
 ├── include/
-│   ├── audio.h          # Procedural alert sound synthesis (ding/chime/bell) and playback queue
-│   ├── config.h         # Display defaults and HTTP limits (72x16, 6.35", 60 Hz, body/header caps)
-│   ├── display.h        # Thread-safe 24-bit framebuffer, PNG I/O, brightness/monochrome/demo state
-│   ├── draw.h           # Color parsing, bitmap fonts, atomic /draw JSON executor
-│   ├── json.h           # Minimal recursive-descent JSON parser for API request bodies
-│   ├── renderer.h       # Monitor DPI sizing and molded-enclosure LED renderer
-│   └── server.h         # Embedded POSIX TCP/HTTP server
-├── src/
-│   ├── main.c           # CLI parsing, lifecycle, 60 Hz main loop, GUI hotkeys
-│   ├── audio.c          # Additive bell/chime PCM synthesis and polyphonic raylib playback
-│   ├── display.c        # Framebuffer, PNG encode/decode, BT.709 monochrome filter, demo & scroller
-│   ├── draw.c           # Shape rasterizers (pixel/line/rect/oval/polygon), 5x7 & 3x5 fonts, /draw
-│   ├── json.c           # JSON parser implementation
-│   ├── renderer.c       # 6.35" calibration, molded enclosure, diffused LED & glow rendering
-│   └── server.c         # Thread-per-connection HTTP/1.1 Keep-Alive server and route handlers
+│   ├── audio.h          # Procedural alert sound & custom melody synthesizer
+│   ├── cli.h            # Built-in client subcommands (say, notify, gif, timer, clock, ...)
+│   ├── config.h         # Display defaults and HTTP limits (72x16, 6.35", 60 Hz)
+│   ├── display.h        # Thread-safe framebuffer, PNG/GIF I/O, widgets, transitions, events, recording
+│   ├── draw.h           # Color parsing, bitmap/proportional fonts, icons, gradients, /draw executor
+│   ├── gif.h            # Strict GIF87a/89a decoder & animated GIF89a encoder
+│   ├── ini.h            # ~/.config/markee/config.ini parser and window position persistence
+│   ├── json.h           # Minimal recursive-descent JSON parser
+│   ├── renderer.h       # Monitor DPI sizing, case themes, borderless drag, LED renderer
+│   ├── server.h         # Embedded POSIX TCP/HTTP server (Keep-Alive, SSE, Bearer auth)
+│   └── webui.h          # Built-in single-page Web Playground (GET /ui)
+├── src/                 # Corresponding C11 implementations + main.c
 ├── examples/
-│   └── demo.py          # Zero-dependency Python demo: /info, PNG round-trip, 60 FPS raw stream
+│   ├── demo.py          # /info, PNG round-trip, and 60 FPS raw RGB24 stream
+│   ├── mcp_server.py    # Zero-dependency stdio MCP server for AI coding agents
+│   ├── pomodoro.py      # Focus / Pomodoro timer with bezel skip and melodies
+│   ├── now_playing.py   # macOS Spotify/Apple Music & Linux playerctl ticker
+│   ├── sysmon.py        # Live CPU sparkline, memory meter, and network monitor
+│   ├── git_watch.py     # Local Git/test runner & GitHub Actions CI watcher
+│   └── carousel.py      # Rotating status carousel daemon with transitions
+├── packaging/
+│   ├── README.md        # Packaging & distribution guide
+│   ├── build-macos-app.sh # Native macOS Markee.app bundle builder
+│   ├── com.markee.display.plist # macOS LaunchAgent login item
+│   ├── markee.rb        # Homebrew formula with brew services support
+│   ├── build-deb.sh     # Debian/Ubuntu .deb package builder
+│   └── build-tarball.sh # Portable release tarball builder
 └── tests/
-    └── test_api.c       # Unit and live socket API integration tests (`make test`)
+    ├── test_api.c       # Unit and live socket API integration tests (`make test`)
+    └── fuzz/            # libFuzzer + standalone ASan/UBSan parser fuzzers (`make fuzz-smoke`)
 ```
 
 ## License

@@ -73,7 +73,7 @@ SAN_TARGET  := test_api_san
 FUZZ_DIR    := $(TEST_DIR)/fuzz
 FUZZ_OUT    := $(BUILD_DIR)/fuzz
 
-.PHONY: all debug release run test sanitize sanitize-build fuzz-smoke fuzz clean distclean install uninstall help
+.PHONY: all debug release run test sanitize sanitize-build fuzz-smoke fuzz app tarball clean distclean install uninstall help
 
 all: $(TARGET)
 
@@ -130,6 +130,12 @@ fuzz:
 	$(CC) -std=c11 $(WARN_FLAGS) -O1 -g -fsanitize=fuzzer,address,undefined -I$(INC_DIR) -I$(FUZZ_DIR) $(RAYLIB_CFLAGS) -o $(FUZZ_OUT)/libfuzz_draw $(FUZZ_DIR)/fuzz_draw.c $(CORE_SRCS) $(LDLIBS)
 	$(CC) -std=c11 $(WARN_FLAGS) -O1 -g -fsanitize=fuzzer,address,undefined -I$(INC_DIR) -I$(FUZZ_DIR) $(RAYLIB_CFLAGS) -o $(FUZZ_OUT)/libfuzz_http $(FUZZ_DIR)/fuzz_http.c $(CORE_SRCS) $(LDLIBS)
 
+app: $(TARGET)
+	./packaging/build-macos-app.sh
+
+tarball: $(TARGET)
+	./packaging/build-tarball.sh
+
 install: $(TARGET)
 	install -d "$(DESTDIR)$(BINDIR)"
 	install -m 0755 $(TARGET) "$(DESTDIR)$(BINDIR)/$(TARGET)"
@@ -159,6 +165,8 @@ help:
 	@echo "  make sanitize   Build and run tests with ASan + UBSan"
 	@echo "  make fuzz-smoke Build and run standalone ASan/UBSan parser fuzzers"
 	@echo "  make fuzz       Build libFuzzer binaries (requires LLVM clang)"
+	@echo "  make app        Build macOS Markee.app bundle in build/Markee.app"
+	@echo "  make tarball    Build release tarball in build/"
 	@echo "  make install    Install $(TARGET) to $(BINDIR)"
 	@echo "  make uninstall  Remove $(TARGET) from $(BINDIR)"
 	@echo "  make clean      Remove build artifacts and binaries"

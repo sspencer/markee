@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS LaunchAgent for starting markee automatically at login.
+
+  Install:
+    cp packaging/com.markee.display.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.markee.display.plist
+
+  Uninstall:
+    launchctl unload -w ~/Library/LaunchAgents/com.markee.display.plist
+    rm ~/Library/LaunchAgents/com.markee.display.plist
+
+  Customize appearance via ~/.config/markee/config.ini.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.markee.display</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Applications/Markee.app/Contents/MacOS/markee</string>
+    <string>--always-on-top</string>
+    <string>--borderless</string>
+    <string>--corner</string>
+    <string>top-right</string>
+    <string>--save-position</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/tmp/markee.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/markee.stderr.log</string>
+</dict>
+</plist>
