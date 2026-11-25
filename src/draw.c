@@ -1077,8 +1077,8 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
     return false;
 }
 
-bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
-                    int *out_ops_executed, char *err_buf, size_t err_size) {
+bool draw_exec_json_ttl(MarkeeDisplay *disp, const char *json_body, size_t json_len,
+                        double ttl_sec, int *out_ops_executed, char *err_buf, size_t err_size) {
     if (out_ops_executed) *out_ops_executed = 0;
     if (err_buf && err_size > 0) err_buf[0] = '\0';
     if (!disp || !disp->pixels) {
@@ -1132,6 +1132,11 @@ bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
     }
 
     if (ok) {
+        if (ttl_sec > 0.0) {
+            display_notify_begin_unlocked(disp, ttl_sec);
+        } else {
+            display_notify_cancel_unlocked(disp);
+        }
         display_stop_gif_unlocked(disp);
         memcpy(disp->pixels, stage, frame_bytes);
         uint8_t *existing_bg = disp->scroll.bg_pixels;
@@ -1161,7 +1166,8 @@ bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
         disp->demo_active = false;
         disp->frames_received++;
         disp->frame_seq++;
-        display_push_event_unlocked(disp, MARKEE_EVT_FRAME, -1, -1, "draw");
+        display_push_event_unlocked(disp, MARKEE_EVT_FRAME, -1, -1,
+                                    ttl_sec > 0.0 ? "notify" : "draw");
     } else {
         staged_gifs_clear(&staged_gifs);
     }
@@ -1173,4 +1179,10 @@ bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
     json_free(root);
     if (out_ops_executed) *out_ops_executed = ok ? executed : 0;
     return ok;
+}
+
+bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
+                    int *out_ops_executed, char *err_buf, size_t err_size) {
+    return draw_exec_json_ttl(disp, json_body, json_len, 0.0,
+                              out_ops_executed, err_buf, err_size);
 }

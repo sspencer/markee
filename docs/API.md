@@ -77,7 +77,8 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | Group | Method | Path (aliases) | Summary |
 |---|---|---|---|
 | **Status** | `GET` | [`/info`](#get-info) (`/`, `/api/info`) | Resolution, settings, audio readiness, frame counter |
-| **Drawing** | `POST` `PUT` | [`/draw`](#post-draw) (`/api/draw`) | Run an atomic JSON batch of shapes, pixels, and text (static or scrolling) |
+| **Drawing** | `POST` `PUT` | [`/draw`](#post-draw) (`/api/draw`) | Run an atomic JSON batch of shapes, pixels, text, and images (optional `?ttl=<sec>`) |
+| **Notify** | `GET` `POST` `PUT` `DELETE` | [`/notify`](#post-notify) (`/api/notify`) | Show a transient notification banner or draw batch for `ttl` seconds, then restore prior state |
 | **Frames** | `GET` | [`/frame`](#get-frame) (`/frame.png`, `/frame.rgb`, `/api/frame`) | Read displayed pixels as a PNG or raw RGB24 |
 | | `POST` `PUT` | [`/frame`](#post-frame) (`/frame.png`, `/frame.rgb`, `/api/frame`) | Replace the entire frame with a PNG or raw RGB24 |
 | | `DELETE` | [`/frame`](#delete-frame-post-clear) (`/api/frame`) | Clear display to black |
@@ -242,7 +243,27 @@ curl -X POST http://127.0.0.1:8080/draw -H "Content-Type: application/json" -d '
 {"ok":true,"ops":5}
 ```
 
-**Common `400` errors:** empty body, non-array or empty array `[]`, JSON syntax error, missing `"op"`, unknown op name, invalid `"color"`/`"fill"` value, or op-specific validation errors (see below).
+**Common `400` errors:** empty body, non-array or empty array `[]`, JSON syntax error, missing `"op"`, unknown op name, invalid `"color"`/`"fill"` value, or op-specific validation errors (see below). Pass optional `?ttl=<sec>` (`0..86400`) to show the batch temporarily and automatically restore the previous display state when the timer expires.
+
+### POST /notify
+
+**Methods:** `GET`, `POST`, `PUT`, `DELETE` · **Alias:** `/api/notify`
+
+Displays a temporary notification for `ttl` seconds (default `5`), then automatically restores whatever was previously on screen (static pixels, demo mode, scrolling text, or animated GIFs).
+
+Accepts either:
+- A JSON object (`text`, `color`, `bg`, `border`, `font`, `ttl`, `scroll`, `speed`, `sound`, `volume`),
+- A plain-text body or query parameters (`?text=...&color=...&ttl=...&sound=chime`), or
+- A `/draw` JSON array (`POST /notify?ttl=5 -d '[...]'`).
+
+```bash
+curl -X POST http://127.0.0.1:8080/notify \
+  -d '{"text":"BUILD OK!","color":"warmwhite","bg":"#001808","border":"green","ttl":5,"sound":"chime"}'
+
+# Check remaining time or dismiss early
+curl http://127.0.0.1:8080/notify
+curl -X DELETE http://127.0.0.1:8080/notify
+```
 
 ### Draw operations
 

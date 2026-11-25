@@ -93,6 +93,113 @@ void display_stop_gif(MarkeeDisplay *disp) {
     pthread_mutex_unlock(&disp->lock);
 }
 
+void display_notify_cancel_unlocked(MarkeeDisplay *disp) {
+    if (!disp) return;
+    for (size_t i = 0; i < disp->notify.saved_gif.count && i < MARKEE_MAX_GIF_LAYERS; i++) {
+        gif_free(disp->notify.saved_gif.layers[i].gif);
+        disp->notify.saved_gif.layers[i].gif = NULL;
+    }
+    memset(disp->notify.saved_gif.layers, 0, sizeof(disp->notify.saved_gif.layers));
+    disp->notify.saved_gif.count = 0;
+    disp->notify.saved_gif.active = false;
+    disp->notify.active = false;
+    disp->notify.has_start_time = false;
+    disp->notify.duration_sec = 0.0;
+}
+
+void display_notify_begin_unlocked(MarkeeDisplay *disp, double ttl_sec) {
+    if (!disp || ttl_sec <= 0.0) return;
+    if (!disp->notify.active) {
+        if (disp->notify.saved_pixels && disp->pixels) {
+            memcpy(disp->notify.saved_pixels, disp->pixels, disp->frame_bytes);
+        }
+        disp->notify.saved_demo_active = disp->demo_active;
+
+        disp->notify.saved_scroll = disp->scroll;
+        disp->notify.saved_scroll.bg_pixels = disp->notify.saved_scroll_bg;
+        if (disp->notify.saved_scroll_bg && disp->scroll.bg_pixels) {
+            memcpy(disp->notify.saved_scroll_bg, disp->scroll.bg_pixels, disp->frame_bytes);
+        }
+
+        /* Move active GIF layer ownership into notify.saved_gif */
+        disp->notify.saved_gif = disp->gif;
+        disp->notify.saved_gif.bg_pixels = disp->notify.saved_gif_bg;
+        if (disp->notify.saved_gif_bg && disp->gif.bg_pixels) {
+            memcpy(disp->notify.saved_gif_bg, disp->gif.bg_pixels, disp->frame_bytes);
+        }
+        memset(disp->gif.layers, 0, sizeof(disp->gif.layers));
+        disp->gif.count = 0;
+        disp->gif.active = false;
+        disp->gif.has_last_time = false;
+    }
+    disp->notify.active = true;
+    disp->notify.duration_sec = ttl_sec;
+    disp->notify.has_start_time = disp->has_tick_time;
+    disp->notify.start_time = disp->has_tick_time ? disp->last_tick_time : 0.0;
+}
+
+static void display_notify_restore_unlocked(MarkeeDisplay *disp) {
+    if (!disp || !disp->notify.active) return;
+
+    display_stop_gif_unlocked(disp);
+    if (disp->pixels && disp->notify.saved_pixels) {
+        memcpy(disp->pixels, disp->notify.saved_pixels, disp->frame_bytes);
+    }
+    disp->demo_active = disp->notify.saved_demo_active;
+
+    uint8_t *scroll_bg = disp->scroll.bg_pixels;
+    disp->scroll = disp->notify.saved_scroll;
+    disp->scroll.bg_pixels = scroll_bg;
+    if (scroll_bg && disp->notify.saved_scroll_bg) {
+        memcpy(scroll_bg, disp->notify.saved_scroll_bg, disp->frame_bytes);
+    }
+
+    uint8_t *gif_bg = disp->gif.bg_pixels;
+    disp->gif = disp->notify.saved_gif;
+    disp->gif.bg_pixels = gif_bg;
+    disp->gif.has_last_time = false;
+    if (gif_bg && disp->notify.saved_gif_bg) {
+        memcpy(gif_bg, disp->notify.saved_gif_bg, disp->frame_bytes);
+    }
+
+    memset(disp->notify.saved_gif.layers, 0, sizeof(disp->notify.saved_gif.layers));
+    disp->notify.saved_gif.count = 0;
+    disp->notify.saved_gif.active = false;
+    disp->notify.active = false;
+    disp->notify.has_start_time = false;
+    disp->notify.duration_sec = 0.0;
+    disp->frame_seq++;
+}
+
+bool display_notify_dismiss(MarkeeDisplay *disp) {
+    if (!disp) return false;
+    pthread_mutex_lock(&disp->lock);
+    bool was_active = disp->notify.active;
+    if (was_active) {
+        display_notify_restore_unlocked(disp);
+    }
+    pthread_mutex_unlock(&disp->lock);
+    return was_active;
+}
+
+bool display_get_notify_status(MarkeeDisplay *disp, double *out_ttl, double *out_remaining) {
+    if (!disp) return false;
+    pthread_mutex_lock(&disp->lock);
+    bool active = disp->notify.active;
+    if (active) {
+        if (out_ttl) *out_ttl = disp->notify.duration_sec;
+        double rem = disp->notify.duration_sec;
+        if (disp->notify.has_start_time && disp->has_tick_time) {
+            double elapsed = disp->last_tick_time - disp->notify.start_time;
+            if (elapsed > 0.0) rem -= elapsed;
+            if (rem < 0.0) rem = 0.0;
+        }
+        if (out_remaining) *out_remaining = rem;
+    }
+    pthread_mutex_unlock(&disp->lock);
+    return active;
+}
+
 bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     if (!disp) return false;
     if (width < MARKEE_MIN_DIM || width > MARKEE_MAX_DIM ||
@@ -105,10 +212,17 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     uint8_t *pixels = calloc(frame_bytes, 1);
     uint8_t *bg_pixels = calloc(frame_bytes, 1);
     uint8_t *gif_bg_pixels = calloc(frame_bytes, 1);
-    if (!pixels || !bg_pixels || !gif_bg_pixels) {
+    uint8_t *notify_px = calloc(frame_bytes, 1);
+    uint8_t *notify_scroll_bg = calloc(frame_bytes, 1);
+    uint8_t *notify_gif_bg = calloc(frame_bytes, 1);
+    if (!pixels || !bg_pixels || !gif_bg_pixels ||
+        !notify_px || !notify_scroll_bg || !notify_gif_bg) {
         free(pixels);
         free(bg_pixels);
         free(gif_bg_pixels);
+        free(notify_px);
+        free(notify_scroll_bg);
+        free(notify_gif_bg);
         return false;
     }
 
@@ -116,6 +230,9 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
         free(pixels);
         free(bg_pixels);
         free(gif_bg_pixels);
+        free(notify_px);
+        free(notify_scroll_bg);
+        free(notify_gif_bg);
         return false;
     }
     if (pthread_cond_init(&disp->event_cond, NULL) != 0) {
@@ -123,6 +240,9 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
         free(pixels);
         free(bg_pixels);
         free(gif_bg_pixels);
+        free(notify_px);
+        free(notify_scroll_bg);
+        free(notify_gif_bg);
         return false;
     }
     if (pthread_mutex_init(&disp->png_lock, NULL) != 0) {
@@ -131,6 +251,9 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
         free(pixels);
         free(bg_pixels);
         free(gif_bg_pixels);
+        free(notify_px);
+        free(notify_scroll_bg);
+        free(notify_gif_bg);
         return false;
     }
 
@@ -140,6 +263,9 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     disp->pixels = pixels;
     disp->scroll.bg_pixels = bg_pixels;
     disp->gif.bg_pixels = gif_bg_pixels;
+    disp->notify.saved_pixels = notify_px;
+    disp->notify.saved_scroll_bg = notify_scroll_bg;
+    disp->notify.saved_gif_bg = notify_gif_bg;
     disp->brightness = 100;
     disp->idle_brightness = 20;
     disp->demo_active = start_demo;
@@ -150,6 +276,7 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
 void display_destroy(MarkeeDisplay *disp) {
     if (!disp) return;
     display_signal_shutdown(disp);
+    display_notify_cancel_unlocked(disp);
     display_stop_gif_unlocked(disp);
     pthread_mutex_destroy(&disp->png_lock);
     pthread_cond_destroy(&disp->event_cond);
@@ -157,9 +284,15 @@ void display_destroy(MarkeeDisplay *disp) {
     free(disp->pixels);
     free(disp->scroll.bg_pixels);
     free(disp->gif.bg_pixels);
+    free(disp->notify.saved_pixels);
+    free(disp->notify.saved_scroll_bg);
+    free(disp->notify.saved_gif_bg);
     disp->pixels = NULL;
     disp->scroll.bg_pixels = NULL;
     disp->gif.bg_pixels = NULL;
+    disp->notify.saved_pixels = NULL;
+    disp->notify.saved_scroll_bg = NULL;
+    disp->notify.saved_gif_bg = NULL;
 }
 
 const char *display_event_type_name(MarkeeEventType type) {
@@ -270,6 +403,7 @@ void display_signal_shutdown(MarkeeDisplay *disp) {
 void display_clear(MarkeeDisplay *disp, bool stop_demo) {
     if (!disp || !disp->pixels) return;
     pthread_mutex_lock(&disp->lock);
+    display_notify_cancel_unlocked(disp);
     stop_scroll_unlocked(disp);
     display_stop_gif_unlocked(disp);
     memset(disp->pixels, 0, disp->frame_bytes);
@@ -285,6 +419,7 @@ void display_clear(MarkeeDisplay *disp, bool stop_demo) {
 void display_fill(MarkeeDisplay *disp, uint8_t r, uint8_t g, uint8_t b, bool stop_demo) {
     if (!disp || !disp->pixels) return;
     pthread_mutex_lock(&disp->lock);
+    display_notify_cancel_unlocked(disp);
     stop_scroll_unlocked(disp);
     display_stop_gif_unlocked(disp);
     for (size_t i = 0; i < disp->frame_bytes; i += 3) {
@@ -309,6 +444,7 @@ MarkeeResult display_set_pixel(MarkeeDisplay *disp, int x, int y,
     }
     size_t idx = ((size_t)y * (size_t)disp->width + (size_t)x) * 3;
     pthread_mutex_lock(&disp->lock);
+    display_notify_cancel_unlocked(disp);
     stop_scroll_unlocked(disp);
     display_stop_gif_unlocked(disp);
     disp->pixels[idx + 0] = r;
@@ -358,6 +494,7 @@ MarkeeResult display_set_raw_rgb(MarkeeDisplay *disp, const uint8_t *rgb, size_t
     if (len != disp->frame_bytes) return MARKEE_ERR_WRONG_DIMENSIONS;
 
     pthread_mutex_lock(&disp->lock);
+    display_notify_cancel_unlocked(disp);
     stop_scroll_unlocked(disp);
     display_stop_gif_unlocked(disp);
     memcpy(disp->pixels, rgb, disp->frame_bytes);
@@ -500,6 +637,7 @@ void display_set_demo(MarkeeDisplay *disp, bool active) {
     if (!disp) return;
     pthread_mutex_lock(&disp->lock);
     if (active) {
+        display_notify_cancel_unlocked(disp);
         stop_scroll_unlocked(disp);
         display_stop_gif_unlocked(disp);
     }
@@ -696,6 +834,7 @@ MarkeeResult display_load_gif(MarkeeDisplay *disp, const uint8_t *gif_data, size
     status.fill_b = gif->bg_b;
 
     pthread_mutex_lock(&disp->lock);
+    display_notify_cancel_unlocked(disp);
     stop_scroll_unlocked(disp);
     display_stop_gif_unlocked(disp);
 
@@ -915,6 +1054,15 @@ void display_tick(MarkeeDisplay *disp, double time_sec) {
         disp->last_activity_time = time_sec;
     }
     disp->last_tick_time = time_sec;
+
+    if (disp->notify.active) {
+        if (!disp->notify.has_start_time) {
+            disp->notify.start_time = time_sec;
+            disp->notify.has_start_time = true;
+        } else if ((time_sec - disp->notify.start_time) >= disp->notify.duration_sec) {
+            display_notify_restore_unlocked(disp);
+        }
+    }
     pthread_mutex_unlock(&disp->lock);
 
     if (!display_is_demo_active(disp)) {

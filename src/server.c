@@ -533,6 +533,8 @@ static const RouteMethods KNOWN_ROUTES[] = {
     {"/pixel",      "GET, POST, PUT, OPTIONS"},
     {"/draw",       "POST, PUT, OPTIONS"},
     {"/api/draw",   "POST, PUT, OPTIONS"},
+    {"/notify",     "GET, POST, PUT, DELETE, OPTIONS"},
+    {"/api/notify", "GET, POST, PUT, DELETE, OPTIONS"},
     {"/monochrome", "GET, POST, PUT, DELETE, OPTIONS"},
     {"/mono",       "GET, POST, PUT, DELETE, OPTIONS"},
     {"/brightness", "GET, POST, PUT, OPTIONS"},
@@ -956,7 +958,7 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         return;
     }
 
-    /* POST or PUT /draw (and /api/draw): JSON array of one or more draw ops */
+    /* POST or PUT /draw (and /api/draw): JSON array of one or more draw ops (optional ?ttl=<sec>) */
     if ((strcmp(req->method, "POST") == 0 || strcmp(req->method, "PUT") == 0) &&
         (strcmp(req->path, "/draw") == 0 || strcmp(req->path, "/api/draw") == 0)) {
         if (!req->body || req->body_len == 0) {
@@ -964,15 +966,251 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
                       "{\"error\":\"empty body; send a JSON array of one or more draw operations\"}", ka);
             return;
         }
+        double ttl_sec = 0.0;
+        char ttl_val[32];
+        if (query_get(req->query, "ttl", ttl_val, sizeof(ttl_val))) {
+            char *end = NULL;
+            double d = strtod(ttl_val, &end);
+            if (end == ttl_val || *end != '\0' || d < 0.0 || d > 86400.0) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"ttl must be a number in 0..86400 seconds\"}", ka);
+                return;
+            }
+            ttl_sec = d;
+        }
         int executed = 0;
         char err[256] = {0};
-        if (!draw_exec_json(disp, (const char *)req->body, req->body_len,
-                            &executed, err, sizeof(err))) {
+        if (!draw_exec_json_ttl(disp, (const char *)req->body, req->body_len, ttl_sec,
+                                &executed, err, sizeof(err))) {
             send_error(fd, 400, "Bad Request", err[0] ? err : "invalid draw request", ka);
             return;
         }
-        char json[128];
-        snprintf(json, sizeof(json), "{\"ok\":true,\"ops\":%d}", executed);
+        char json[160];
+        if (ttl_sec > 0.0) {
+            snprintf(json, sizeof(json), "{\"ok\":true,\"ops\":%d,\"ttl_sec\":%.2f}", executed, ttl_sec);
+        } else {
+            snprintf(json, sizeof(json), "{\"ok\":true,\"ops\":%d}", executed);
+        }
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* GET /notify or /api/notify */
+    if (strcmp(req->method, "GET") == 0 &&
+        (strcmp(req->path, "/notify") == 0 || strcmp(req->path, "/api/notify") == 0)) {
+        double ttl = 0.0, rem = 0.0;
+        if (display_get_notify_status(disp, &ttl, &rem)) {
+            char json[128];
+            snprintf(json, sizeof(json),
+                     "{\"active\":true,\"ttl_sec\":%.2f,\"remaining_sec\":%.2f}", ttl, rem);
+            send_json(fd, 200, "OK", json, ka);
+        } else {
+            send_json(fd, 200, "OK", "{\"active\":false}", ka);
+        }
+        return;
+    }
+
+    /* DELETE /notify or /api/notify: dismiss active notification and restore prior display */
+    if (strcmp(req->method, "DELETE") == 0 &&
+        (strcmp(req->path, "/notify") == 0 || strcmp(req->path, "/api/notify") == 0)) {
+        bool dismissed = display_notify_dismiss(disp);
+        char json[96];
+        snprintf(json, sizeof(json), "{\"ok\":true,\"dismissed\":%s}",
+                 dismissed ? "true" : "false");
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* POST or PUT /notify or /api/notify: transient notification banner or draw batch with TTL */
+    if ((strcmp(req->method, "POST") == 0 || strcmp(req->method, "PUT") == 0) &&
+        (strcmp(req->path, "/notify") == 0 || strcmp(req->path, "/api/notify") == 0)) {
+        double ttl_sec = 5.0;
+        char val[256];
+        if (query_get(req->query, "ttl", val, sizeof(val))) {
+            char *end = NULL;
+            double d = strtod(val, &end);
+            if (end == val || *end != '\0' || !(d > 0.0) || d > 86400.0) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"ttl must be > 0 and <= 86400 seconds\"}", ka);
+                return;
+            }
+            ttl_sec = d;
+        }
+
+        JsonValue *bj = parse_body_json(req->body, req->body_len);
+        if (bj && bj->type == JSON_ARRAY) {
+            /* Arbitrary /draw array with TTL */
+            json_free(bj);
+            int executed = 0;
+            char err[256] = {0};
+            if (!draw_exec_json_ttl(disp, (const char *)req->body, req->body_len, ttl_sec,
+                                    &executed, err, sizeof(err))) {
+                send_error(fd, 400, "Bad Request", err[0] ? err : "invalid notify draw batch", ka);
+                return;
+            }
+            char json[128];
+            snprintf(json, sizeof(json), "{\"ok\":true,\"ops\":%d,\"ttl_sec\":%.2f}",
+                     executed, ttl_sec);
+            send_json(fd, 200, "OK", json, ka);
+            return;
+        }
+
+        char text[256] = {0};
+        char color[64] = "warmwhite";
+        char bg[64] = "black";
+        char border[64] = {0};
+        char font[32] = "6x8";
+        bool has_scroll_opt = false;
+        bool scroll_opt = false;
+        double speed = 28.0;
+        int sound_id = 0;
+        int volume = 100;
+
+        if (query_get(req->query, "text", val, sizeof(val))) {
+            snprintf(text, sizeof(text), "%s", val);
+        }
+        if (query_get(req->query, "color", val, sizeof(val))) {
+            snprintf(color, sizeof(color), "%s", val);
+        }
+        if (query_get(req->query, "bg", val, sizeof(val))) {
+            snprintf(bg, sizeof(bg), "%s", val);
+        }
+        if (query_get(req->query, "border", val, sizeof(val))) {
+            snprintf(border, sizeof(border), "%s", val);
+        }
+        if (query_get(req->query, "font", val, sizeof(val))) {
+            snprintf(font, sizeof(font), "%s", val);
+        }
+        if (query_get(req->query, "sound", val, sizeof(val))) {
+            sound_id = audio_parse_alert_id(val);
+            if (sound_id <= 0) {
+                json_free(bj);
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"sound must be 1..3 or ding, chime, bell\"}", ka);
+                return;
+            }
+        }
+        if (!extract_alert_volume(req, bj, &volume)) {
+            json_free(bj);
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"volume must be an integer 0..100\"}", ka);
+            return;
+        }
+
+        if (bj && bj->type == JSON_OBJECT) {
+            const char *s;
+            if (!text[0] && (s = json_as_string(json_obj_get(bj, "text"))) != NULL) {
+                snprintf(text, sizeof(text), "%s", s);
+            }
+            if ((s = json_as_string(json_obj_get(bj, "color"))) != NULL) {
+                snprintf(color, sizeof(color), "%s", s);
+            }
+            if ((s = json_as_string(json_obj_get(bj, "bg"))) != NULL) {
+                snprintf(bg, sizeof(bg), "%s", s);
+            }
+            if ((s = json_as_string(json_obj_get(bj, "border"))) != NULL) {
+                snprintf(border, sizeof(border), "%s", s);
+            }
+            if ((s = json_as_string(json_obj_get(bj, "font"))) != NULL) {
+                snprintf(font, sizeof(font), "%s", s);
+            }
+            const JsonValue *jttl = json_obj_get(bj, "ttl");
+            if (jttl) {
+                double d = 0.0;
+                if (!json_as_double(jttl, &d) || !(d > 0.0) || d > 86400.0) {
+                    json_free(bj);
+                    send_json(fd, 400, "Bad Request",
+                              "{\"error\":\"ttl must be > 0 and <= 86400 seconds\"}", ka);
+                    return;
+                }
+                ttl_sec = d;
+            }
+            const JsonValue *jsc = json_obj_get(bj, "scroll");
+            if (jsc && json_as_bool(jsc, &scroll_opt)) {
+                has_scroll_opt = true;
+            }
+            const JsonValue *jsp = json_obj_get(bj, "speed");
+            if (jsp) {
+                double sp = 0.0;
+                if (json_as_double(jsp, &sp) && sp > 0.0) speed = sp;
+            }
+            const JsonValue *jsnd = json_obj_get(bj, "sound");
+            if (jsnd && jsnd->type != JSON_NULL) {
+                sound_id = parse_alert_json_value(jsnd);
+                if (sound_id <= 0) {
+                    json_free(bj);
+                    send_json(fd, 400, "Bad Request",
+                              "{\"error\":\"sound must be 1..3 or ding, chime, bell\"}", ka);
+                    return;
+                }
+            }
+        } else if (!text[0] && req->body && req->body_len > 0 && !bj) {
+            /* Plain text notification body */
+            const char *s = (const char *)req->body;
+            while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+            size_t len = strlen(s);
+            while (len > 0 && (s[len - 1] == '\r' || s[len - 1] == '\n')) len--;
+            if (len >= sizeof(text)) len = sizeof(text) - 1;
+            memcpy(text, s, len);
+            text[len] = '\0';
+        }
+        json_free(bj);
+
+        if (!text[0]) {
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"provide notification 'text', plain-text body, or a /draw JSON array\"}",
+                      ka);
+            return;
+        }
+
+        int tw = draw_measure_text(text, font);
+        bool do_scroll = has_scroll_opt ? scroll_opt : (tw > disp->width - (border[0] ? 4 : 0));
+        int tx = do_scroll ? disp->width : (disp->width - tw) / 2;
+        int glyph_h = (strcasecmp(font, "4x6") == 0 || strcasecmp(font, "3x5") == 0 ||
+                       strcasecmp(font, "small") == 0) ? 5 : 7;
+        int ty = (disp->height - glyph_h) / 2;
+        if (ty < 0) ty = 0;
+
+        char esc_text[512], esc_color[128], esc_bg[128], esc_border[128], esc_font[64];
+        json_escape(text, esc_text, sizeof(esc_text));
+        json_escape(color, esc_color, sizeof(esc_color));
+        json_escape(bg, esc_bg, sizeof(esc_bg));
+        json_escape(border, esc_border, sizeof(esc_border));
+        json_escape(font, esc_font, sizeof(esc_font));
+
+        char batch[1400];
+        if (border[0]) {
+            snprintf(batch, sizeof(batch),
+                     "[{\"op\":\"clear\",\"color\":\"%s\"},"
+                     "{\"op\":\"rect\",\"x\":0,\"y\":0,\"w\":%d,\"h\":%d,\"color\":\"%s\"},"
+                     "{\"op\":\"text\",\"x\":%d,\"y\":%d,\"text\":\"%s\",\"font\":\"%s\","
+                     "\"color\":\"%s\",\"scroll\":%s,\"speed\":%.1f}]",
+                     esc_bg, disp->width, disp->height, esc_border,
+                     tx, ty, esc_text, esc_font, esc_color,
+                     do_scroll ? "true" : "false", speed);
+        } else {
+            snprintf(batch, sizeof(batch),
+                     "[{\"op\":\"clear\",\"color\":\"%s\"},"
+                     "{\"op\":\"text\",\"x\":%d,\"y\":%d,\"text\":\"%s\",\"font\":\"%s\","
+                     "\"color\":\"%s\",\"scroll\":%s,\"speed\":%.1f}]",
+                     esc_bg, tx, ty, esc_text, esc_font, esc_color,
+                     do_scroll ? "true" : "false", speed);
+        }
+
+        int executed = 0;
+        char err[256] = {0};
+        if (!draw_exec_json_ttl(disp, batch, strlen(batch), ttl_sec,
+                                &executed, err, sizeof(err))) {
+            send_error(fd, 400, "Bad Request", err[0] ? err : "invalid notification parameters", ka);
+            return;
+        }
+        if (sound_id > 0) {
+            audio_trigger(srv->audio, sound_id, (uint8_t)volume);
+        }
+
+        char json[160];
+        snprintf(json, sizeof(json), "{\"ok\":true,\"ttl_sec\":%.2f,\"scroll\":%s}",
+                 ttl_sec, do_scroll ? "true" : "false");
         send_json(fd, 200, "OK", json, ka);
         return;
     }

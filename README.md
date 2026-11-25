@@ -150,7 +150,8 @@ Available when running in GUI mode:
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | [`/info`](docs/API.md#get-info) | Resolution, settings, audio readiness, frame counter |
-| `POST` `PUT` | [`/draw`](docs/API.md#post-draw) | Atomic JSON batch of `clear`, `pixel`, `line`, `rect`, `oval`, `polygon`, `text`, and `image` ops |
+| `POST` `PUT` | [`/draw`](docs/API.md#post-draw) | Atomic JSON batch of `clear`, `pixel`, `line`, `rect`, `oval`, `polygon`, `text`, and `image` ops (optional `?ttl=<sec>`) |
+| `GET` `POST` `PUT` `DELETE` | [`/notify`](docs/API.md#post-notify) | Show a temporary notification banner/batch for `ttl` seconds, then auto-restore prior screen |
 | `GET` | [`/frame`](docs/API.md#get-frame) | Read displayed pixels as a PNG (`/frame.rgb` or `?format=raw` for raw RGB24) |
 | `POST` `PUT` | [`/frame`](docs/API.md#post-frame) | Replace the frame with a `W×H` PNG or `W×H×3` raw RGB24 bytes (`/frame.rgb`) |
 | `GET` `POST` `PUT` `DELETE` | [`/animate`](docs/API.md#animated-gifs) | Play, inspect, or stop an animated GIF (crop/center to fit; optional `?fill=<color>` and `?loop=<n>`) |

@@ -2005,6 +2005,73 @@ static void test_events_api(void) {
     printf("[PASS] /events API & /idle dimming (ring buffer, SSE stream, night mode wake)\n");
 }
 
+static void test_notify_ttl_api(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, false));
+    MarkeeAudio *audio = audio_create(false);
+    assert(audio != NULL);
+    MarkeeServer *srv = server_start_ex(&disp, audio, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+    uint8_t pr, pg, pb;
+
+    /* 1. Establish base display (solid blue) */
+    HttpResp r = do_request(port, "POST", "/fill?color=blue", NULL, NULL, 0);
+    assert(r.status == 200);
+    free(r.body);
+    display_tick(&disp, 1.0);
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 255);
+
+    /* 2. POST /notify with JSON banner + ttl=3 + sound=chime */
+    const char *notif = "{\"text\":\"OK\",\"color\":\"white\",\"bg\":\"#004000\",\"border\":\"green\",\"ttl\":3,\"sound\":\"chime\"}";
+    r = do_request(port, "POST", "/notify", "application/json", notif, strlen(notif));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"ttl_sec\":3.00") != NULL);
+    free(r.body);
+    assert(audio_get_last_alert_id(audio) == 2);
+
+    /* Notification border (green) visible at (0,0) */
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 255 && pb == 0);
+
+    /* GET /notify reports active */
+    r = do_request(port, "GET", "/notify", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"active\":true") != NULL);
+    free(r.body);
+
+    /* Still active at t=3.5 (2.5s elapsed) */
+    display_tick(&disp, 3.5);
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 255 && pb == 0);
+
+    /* Auto-restores original blue display at t=4.1 (>3.0s elapsed) */
+    display_tick(&disp, 4.1);
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 255);
+
+    /* 3. POST /draw?ttl=2 + early DELETE /notify restore */
+    const char *temp_draw = "[{\"op\":\"clear\",\"color\":\"red\"}]";
+    r = do_request(port, "POST", "/draw?ttl=2", "application/json", temp_draw, strlen(temp_draw));
+    assert(r.status == 200);
+    free(r.body);
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 0 && pb == 0);
+
+    r = do_request(port, "DELETE", "/notify", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"dismissed\":true") != NULL);
+    free(r.body);
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 255);
+
+    server_stop(srv);
+    audio_destroy(audio);
+    display_destroy(&disp);
+    printf("[PASS] transient notifications (POST /notify, POST /draw?ttl, auto-restore, DELETE /notify)\n");
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     SetTraceLogLevel(LOG_ERROR);
@@ -2023,6 +2090,7 @@ int main(void) {
     test_animate_http_api();
     test_draw_image_op();
     test_events_api();
+    test_notify_ttl_api();
 
     printf("\nAll markee tests passed!\n");
     return 0;

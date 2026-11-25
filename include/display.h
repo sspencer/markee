@@ -82,6 +82,19 @@ typedef struct {
 } MarkeeGifStatus;
 
 typedef struct {
+    bool active;
+    double duration_sec;
+    bool has_start_time;
+    double start_time;
+    uint8_t *saved_pixels;
+    uint8_t *saved_scroll_bg;
+    uint8_t *saved_gif_bg;
+    bool saved_demo_active;
+    MarkeeScrollState saved_scroll;
+    MarkeeGifAnimState saved_gif;
+} MarkeeNotifyState;
+
+typedef struct {
     pthread_mutex_t lock;
     pthread_cond_t event_cond;
     pthread_mutex_t png_lock;
@@ -99,6 +112,7 @@ typedef struct {
     uint64_t frame_seq;
     MarkeeScrollState scroll;
     MarkeeGifAnimState gif;
+    MarkeeNotifyState notify;
     MarkeeEvent events[MARKEE_EVENT_RING_CAP];
     size_t event_head;
     size_t event_count;
@@ -164,6 +178,13 @@ void display_stop_gif(MarkeeDisplay *disp);
 void display_stop_gif_unlocked(MarkeeDisplay *disp);
 bool display_get_gif_status(MarkeeDisplay *disp, MarkeeGifStatus *out_status);
 bool display_is_gif_active(MarkeeDisplay *disp);
+
+/* Transient notification TTL support: save current state before drawing a temporary
+ * overlay, automatically restore after ttl_sec in display_tick(), or dismiss early. */
+void display_notify_begin_unlocked(MarkeeDisplay *disp, double ttl_sec);
+void display_notify_cancel_unlocked(MarkeeDisplay *disp);
+bool display_notify_dismiss(MarkeeDisplay *disp);
+bool display_get_notify_status(MarkeeDisplay *disp, double *out_ttl, double *out_remaining);
 
 /* Idle dimming / night mode (GUI brightness dims after timeout_sec of no writes). */
 void display_set_idle_dim(MarkeeDisplay *disp, double timeout_sec, uint8_t idle_brightness);

@@ -17,7 +17,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 
 ## 2. Display & Drawing Capabilities
 
-- [ ] **Transient notifications with TTL (`POST /notify` or `?ttl=<sec>`):** Temporarily display an alert (e.g., `"BUILD OK!"` + chime for 5 seconds) and automatically restore whatever was previously on screen (clock, ticker, GIF, or dashboard).
+- [x] **Transient notifications with TTL (`POST /notify` or `?ttl=<sec>`):** Temporarily display an alert (banner JSON, plain text, or `/draw` batch + optional alert sound) for `ttl` seconds and automatically restore the previous display state (pixels, demo, scroller, or GIFs). `GET /notify` inspects remaining time; `DELETE /notify` dismisses early.
 - [ ] **Clipped scrolling regions (`clip: [x, y, w, h]` on scrolling `text`):** Constrain marquee scrolling to a sub-rectangle so an animated icon/GIF on the left (`x: 0..15`) and a scrolling ticker on the right (`x: 18..71`) never overlap.
 - [ ] **Text alignment & proportional font option (`align: "left"|"center"|"right"`):** Avoid manual character-width math when centering text, and add a tighter proportional font so narrow glyphs (`i`, `l`, `1`, `:`) fit more cleanly on 72 px.
 - [ ] **Built-in autonomous widgets (`clock`, `countdown`, `progress`, `sparkline`):**

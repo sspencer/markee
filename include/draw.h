@@ -34,4 +34,9 @@ void draw_render_text_buf(uint8_t *buf, int buf_w, int buf_h,
 bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
                     int *out_ops_executed, char *err_buf, size_t err_size);
 
+/* Same as draw_exec_json(), but when ttl_sec > 0 runs as a transient notification that
+ * restores the previous display state once ttl_sec elapses. */
+bool draw_exec_json_ttl(MarkeeDisplay *disp, const char *json_body, size_t json_len,
+                        double ttl_sec, int *out_ops_executed, char *err_buf, size_t err_size);
+
 #endif /* MARKEE_DRAW_H */
