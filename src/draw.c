@@ -333,12 +333,25 @@ static void prop_glyph_bounds(unsigned char uc, int *first_col, int *last_col) {
     *last_col = last;
 }
 
-static void put_px_buf(uint8_t *buf, int buf_w, int buf_h, int x, int y, MarkeeColor c) {
-    if (x < 0 || x >= buf_w || y < 0 || y >= buf_h) return;
+static void put_px_alpha(uint8_t *buf, int buf_w, int buf_h, int x, int y,
+                         MarkeeColor c, uint8_t alpha) {
+    if (x < 0 || x >= buf_w || y < 0 || y >= buf_h || alpha == 0) return;
     size_t idx = ((size_t)y * (size_t)buf_w + (size_t)x) * 3;
-    buf[idx + 0] = c.r;
-    buf[idx + 1] = c.g;
-    buf[idx + 2] = c.b;
+    if (alpha == 255) {
+        buf[idx + 0] = c.r;
+        buf[idx + 1] = c.g;
+        buf[idx + 2] = c.b;
+    } else {
+        uint32_t a = alpha;
+        uint32_t inv = 255U - a;
+        buf[idx + 0] = (uint8_t)(((uint32_t)c.r * a + (uint32_t)buf[idx + 0] * inv + 127U) / 255U);
+        buf[idx + 1] = (uint8_t)(((uint32_t)c.g * a + (uint32_t)buf[idx + 1] * inv + 127U) / 255U);
+        buf[idx + 2] = (uint8_t)(((uint32_t)c.b * a + (uint32_t)buf[idx + 2] * inv + 127U) / 255U);
+    }
+}
+
+static void put_px_buf(uint8_t *buf, int buf_w, int buf_h, int x, int y, MarkeeColor c) {
+    put_px_alpha(buf, buf_w, buf_h, x, y, c, 255);
 }
 
 int draw_measure_text(const char *text, const char *font) {
@@ -489,7 +502,8 @@ static const BuiltinIcon *lookup_icon(const char *name) {
 }
 
 static void draw_icon_buf(uint8_t *buf, int bw, int bh,
-                          const BuiltinIcon *icon, int x, int y, int scale, MarkeeColor c) {
+                          const BuiltinIcon *icon, int x, int y, int scale,
+                          MarkeeColor c, uint8_t alpha) {
     if (scale < 1) scale = 1;
     if (scale > 4) scale = 4;
     for (int ry = 0; ry < 8; ry++) {
@@ -498,7 +512,7 @@ static void draw_icon_buf(uint8_t *buf, int bw, int bh,
             if (row & (0x80U >> rx)) {
                 for (int sy = 0; sy < scale; sy++) {
                     for (int sx = 0; sx < scale; sx++) {
-                        put_px_buf(buf, bw, bh, x + rx * scale + sx, y + ry * scale + sy, c);
+                        put_px_alpha(buf, bw, bh, x + rx * scale + sx, y + ry * scale + sy, c, alpha);
                     }
                 }
             }
@@ -506,10 +520,37 @@ static void draw_icon_buf(uint8_t *buf, int bw, int bh,
     }
 }
 
+static void draw_gradient_buf(uint8_t *buf, int bw, int bh,
+                              int x, int y, int w, int h,
+                              MarkeeColor from_c, MarkeeColor to_c,
+                              bool vertical, uint8_t alpha) {
+    if (w <= 0 || h <= 0) return;
+    int cx0 = x < 0 ? 0 : x;
+    int cy0 = y < 0 ? 0 : y;
+    int cx1 = (x + w) > bw ? bw : (x + w);
+    int cy1 = (y + h) > bh ? bh : (y + h);
+    int denom = vertical ? (h > 1 ? h - 1 : 1) : (w > 1 ? w - 1 : 1);
+
+    for (int py = cy0; py < cy1; py++) {
+        for (int px = cx0; px < cx1; px++) {
+            double t = vertical ? ((double)(py - y) / (double)denom)
+                                : ((double)(px - x) / (double)denom);
+            if (t < 0.0) t = 0.0;
+            if (t > 1.0) t = 1.0;
+            MarkeeColor c = {
+                (uint8_t)lround((double)from_c.r * (1.0 - t) + (double)to_c.r * t),
+                (uint8_t)lround((double)from_c.g * (1.0 - t) + (double)to_c.g * t),
+                (uint8_t)lround((double)from_c.b * (1.0 - t) + (double)to_c.b * t)
+            };
+            put_px_alpha(buf, bw, bh, px, py, c, alpha);
+        }
+    }
+}
+
 /* --- Shape Rasterizers (called with disp->lock held) --- */
 
-static void draw_line_buf(uint8_t *buf, int bw, int bh,
-                          int x1, int y1, int x2, int y2, MarkeeColor c) {
+static void draw_line_buf_a(uint8_t *buf, int bw, int bh,
+                            int x1, int y1, int x2, int y2, MarkeeColor c, uint8_t alpha) {
     int dx = abs(x2 - x1);
     int sx = (x1 < x2) ? 1 : -1;
     int dy = -abs(y2 - y1);
@@ -517,7 +558,7 @@ static void draw_line_buf(uint8_t *buf, int bw, int bh,
     int err = dx + dy;
 
     for (;;) {
-        put_px_buf(buf, bw, bh, x1, y1, c);
+        put_px_alpha(buf, bw, bh, x1, y1, c, alpha);
         if (x1 == x2 && y1 == y2) break;
         int e2 = 2 * err;
         if (e2 >= dy) {
@@ -529,6 +570,11 @@ static void draw_line_buf(uint8_t *buf, int bw, int bh,
             y1 += sy;
         }
     }
+}
+
+static void draw_line_buf(uint8_t *buf, int bw, int bh,
+                          int x1, int y1, int x2, int y2, MarkeeColor c) {
+    draw_line_buf_a(buf, bw, bh, x1, y1, x2, y2, c, 255);
 }
 
 static bool rect_contains(int px, int py, int x, int y, int w, int h, int radius) {
@@ -562,10 +608,10 @@ static bool rect_contains(int px, int py, int x, int y, int w, int h, int radius
     return true;
 }
 
-static void draw_rect_buf(uint8_t *buf, int bw, int bh,
-                          int x, int y, int w, int h, int radius,
-                          bool has_fill, MarkeeColor fill_c,
-                          bool has_stroke, MarkeeColor stroke_c) {
+static void draw_rect_buf_a(uint8_t *buf, int bw, int bh,
+                            int x, int y, int w, int h, int radius,
+                            bool has_fill, MarkeeColor fill_c,
+                            bool has_stroke, MarkeeColor stroke_c, uint8_t alpha) {
     if (w <= 0 || h <= 0) return;
     int max_r = (w < h ? w : h) / 2;
     if (radius < 0) radius = 0;
@@ -586,12 +632,19 @@ static void draw_rect_buf(uint8_t *buf, int bw, int bh,
                            !rect_contains(px, py + 1, x, y, w, h, radius);
 
             if (has_stroke && on_edge) {
-                put_px_buf(buf, bw, bh, px, py, stroke_c);
+                put_px_alpha(buf, bw, bh, px, py, stroke_c, alpha);
             } else if (has_fill) {
-                put_px_buf(buf, bw, bh, px, py, fill_c);
+                put_px_alpha(buf, bw, bh, px, py, fill_c, alpha);
             }
         }
     }
+}
+
+static void draw_rect_buf(uint8_t *buf, int bw, int bh,
+                          int x, int y, int w, int h, int radius,
+                          bool has_fill, MarkeeColor fill_c,
+                          bool has_stroke, MarkeeColor stroke_c) {
+    draw_rect_buf_a(buf, bw, bh, x, y, w, h, radius, has_fill, fill_c, has_stroke, stroke_c, 255);
 }
 
 static bool oval_contains(int px, int py, double cx, double cy, double rx, double ry) {
@@ -600,10 +653,10 @@ static bool oval_contains(int px, int py, double cx, double cy, double rx, doubl
     return (nx * nx + ny * ny) <= 1.0 + 1e-9;
 }
 
-static void draw_oval_buf(uint8_t *buf, int bw, int bh,
-                          int x, int y, int w, int h,
-                          bool has_fill, MarkeeColor fill_c,
-                          bool has_stroke, MarkeeColor stroke_c) {
+static void draw_oval_buf_a(uint8_t *buf, int bw, int bh,
+                            int x, int y, int w, int h,
+                            bool has_fill, MarkeeColor fill_c,
+                            bool has_stroke, MarkeeColor stroke_c, uint8_t alpha) {
     if (w <= 0 || h <= 0) return;
 
     int cx0 = x < 0 ? 0 : x;
@@ -626,9 +679,9 @@ static void draw_oval_buf(uint8_t *buf, int bw, int bh,
                            !oval_contains(px, py + 1, cx, cy, rx, ry);
 
             if (has_stroke && on_edge) {
-                put_px_buf(buf, bw, bh, px, py, stroke_c);
+                put_px_alpha(buf, bw, bh, px, py, stroke_c, alpha);
             } else if (has_fill) {
-                put_px_buf(buf, bw, bh, px, py, fill_c);
+                put_px_alpha(buf, bw, bh, px, py, fill_c, alpha);
             }
         }
     }
@@ -645,10 +698,10 @@ static int cmp_double(const void *a, const void *b) {
     return (da > db) - (da < db);
 }
 
-static void draw_polygon_buf(uint8_t *buf, int bw, int bh,
-                             const IntPoint *pts, size_t n,
-                             bool has_fill, MarkeeColor fill_c,
-                             bool has_stroke, MarkeeColor stroke_c) {
+static void draw_polygon_buf_a(uint8_t *buf, int bw, int bh,
+                               const IntPoint *pts, size_t n,
+                               bool has_fill, MarkeeColor fill_c,
+                               bool has_stroke, MarkeeColor stroke_c, uint8_t alpha) {
     if (!pts || n < 2) return;
 
     /* 1. Scanline polygon fill (even-odd rule at pixel centers) */
@@ -682,7 +735,7 @@ static void draw_polygon_buf(uint8_t *buf, int bw, int bh,
                     if (x_start < 0) x_start = 0;
                     if (x_end >= bw) x_end = bw - 1;
                     for (int px = x_start; px <= x_end; px++) {
-                        put_px_buf(buf, bw, bh, px, py, fill_c);
+                        put_px_alpha(buf, bw, bh, px, py, fill_c, alpha);
                     }
                 }
             }
@@ -694,7 +747,7 @@ static void draw_polygon_buf(uint8_t *buf, int bw, int bh,
     if (has_stroke) {
         for (size_t i = 0; i < n; i++) {
             size_t next = (i + 1) % n;
-            draw_line_buf(buf, bw, bh, pts[i].x, pts[i].y, pts[next].x, pts[next].y, stroke_c);
+            draw_line_buf_a(buf, bw, bh, pts[i].x, pts[i].y, pts[next].x, pts[next].y, stroke_c, alpha);
         }
     }
 }
@@ -910,6 +963,20 @@ static void staged_gifs_clear(StagedGifs *sg) {
     sg->count = 0;
 }
 
+static bool extract_alpha(const JsonValue *obj, uint8_t *out_alpha,
+                          char *err_buf, size_t err_size) {
+    *out_alpha = 255;
+    const JsonValue *ja = json_obj_get(obj, "alpha");
+    if (!ja || ja->type == JSON_NULL) return true;
+    double a = 1.0;
+    if (!json_as_double(ja, &a) || a < 0.0 || a > 1.0) {
+        snprintf(err_buf, err_size, "'alpha' must be a number between 0.0 and 1.0");
+        return false;
+    }
+    *out_alpha = (uint8_t)lround(a * 255.0);
+    return true;
+}
+
 static bool exec_single_op_buf(MarkeeDisplay *disp,
                                uint8_t *buf, uint8_t *static_bg,
                                int bw, int bh, size_t frame_bytes,
@@ -928,6 +995,9 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
         snprintf(err_buf, err_size, "missing required string field 'op'");
         return false;
     }
+
+    uint8_t alpha = 255;
+    if (!extract_alpha(obj, &alpha, err_buf, err_size)) return false;
 
     if (strcasecmp(op, "clear") == 0) {
         bool has_c = false;
@@ -961,15 +1031,15 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
         MarkeeColor sc, fc;
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
         if (hs) {
-            put_px_buf(buf, bw, bh, x, y, sc);
-            put_px_buf(static_bg, bw, bh, x, y, sc);
+            put_px_alpha(buf, bw, bh, x, y, sc, alpha);
+            put_px_alpha(static_bg, bw, bh, x, y, sc, alpha);
         } else if (hf) {
-            put_px_buf(buf, bw, bh, x, y, fc);
-            put_px_buf(static_bg, bw, bh, x, y, fc);
+            put_px_alpha(buf, bw, bh, x, y, fc, alpha);
+            put_px_alpha(static_bg, bw, bh, x, y, fc, alpha);
         } else if (!op_specifies_color(obj)) {
             MarkeeColor w = {255, 255, 255};
-            put_px_buf(buf, bw, bh, x, y, w);
-            put_px_buf(static_bg, bw, bh, x, y, w);
+            put_px_alpha(buf, bw, bh, x, y, w, alpha);
+            put_px_alpha(static_bg, bw, bh, x, y, w, alpha);
         } /* else: explicit "none"/null color -> nothing to draw */
         return true;
     }
@@ -983,8 +1053,8 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
         MarkeeColor sc, fc;
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
         MarkeeColor c = hs ? sc : (hf ? fc : (MarkeeColor){255, 255, 255});
-        draw_line_buf(buf, bw, bh, x1, y1, x2, y2, c);
-        draw_line_buf(static_bg, bw, bh, x1, y1, x2, y2, c);
+        draw_line_buf_a(buf, bw, bh, x1, y1, x2, y2, c, alpha);
+        draw_line_buf_a(static_bg, bw, bh, x1, y1, x2, y2, c, alpha);
         return true;
     }
 
@@ -998,8 +1068,8 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
         MarkeeColor sc, fc;
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
         default_white_stroke(obj, &hs, &sc);
-        draw_rect_buf(buf, bw, bh, x, y, w, h, radius, hf, fc, hs, sc);
-        draw_rect_buf(static_bg, bw, bh, x, y, w, h, radius, hf, fc, hs, sc);
+        draw_rect_buf_a(buf, bw, bh, x, y, w, h, radius, hf, fc, hs, sc, alpha);
+        draw_rect_buf_a(static_bg, bw, bh, x, y, w, h, radius, hf, fc, hs, sc, alpha);
         return true;
     }
 
@@ -1012,8 +1082,8 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
         MarkeeColor sc, fc;
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
         default_white_stroke(obj, &hs, &sc);
-        draw_oval_buf(buf, bw, bh, x, y, w, h, hf, fc, hs, sc);
-        draw_oval_buf(static_bg, bw, bh, x, y, w, h, hf, fc, hs, sc);
+        draw_oval_buf_a(buf, bw, bh, x, y, w, h, hf, fc, hs, sc, alpha);
+        draw_oval_buf_a(static_bg, bw, bh, x, y, w, h, hf, fc, hs, sc, alpha);
         return true;
     }
 
@@ -1052,8 +1122,8 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
             return false;
         }
         default_white_stroke(obj, &hs, &sc);
-        draw_polygon_buf(buf, bw, bh, pts, n, hf, fc, hs, sc);
-        draw_polygon_buf(static_bg, bw, bh, pts, n, hf, fc, hs, sc);
+        draw_polygon_buf_a(buf, bw, bh, pts, n, hf, fc, hs, sc, alpha);
+        draw_polygon_buf_a(static_bg, bw, bh, pts, n, hf, fc, hs, sc, alpha);
         free(pts);
         return true;
     }
@@ -1553,13 +1623,45 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
         MarkeeColor sc, fc;
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
         MarkeeColor c = hs ? sc : (hf ? fc : (MarkeeColor){255, 255, 255});
-        draw_icon_buf(buf, bw, bh, icon, x, y, scale, c);
-        draw_icon_buf(static_bg, bw, bh, icon, x, y, scale, c);
+        draw_icon_buf(buf, bw, bh, icon, x, y, scale, c, alpha);
+        draw_icon_buf(static_bg, bw, bh, icon, x, y, scale, c, alpha);
+        return true;
+    }
+
+    if (strcasecmp(op, "gradient") == 0) {
+        int x = opt_int(obj, "x", 0);
+        int y = opt_int(obj, "y", 0);
+        int w = opt_int(obj, "w", bw);
+        int h = opt_int(obj, "h", bh);
+
+        bool has_from = false, has_to = false;
+        MarkeeColor from_c = {0, 0, 0}, to_c = {255, 255, 255};
+        const JsonValue *jfrom = json_obj_get(obj, "from");
+        const JsonValue *jto = json_obj_get(obj, "to");
+        if (!jfrom || !parse_json_color(jfrom, &has_from, &from_c) || !has_from ||
+            !jto || !parse_json_color(jto, &has_to, &to_c) || !has_to) {
+            snprintf(err_buf, err_size, "'gradient' op requires valid 'from' and 'to' colors");
+            return false;
+        }
+
+        bool vertical = false;
+        const char *dir = json_as_string(json_obj_get(obj, "direction"));
+        if (dir && *dir) {
+            if (strcasecmp(dir, "vertical") == 0 || strcasecmp(dir, "v") == 0) vertical = true;
+            else if (strcasecmp(dir, "horizontal") == 0 || strcasecmp(dir, "h") == 0) vertical = false;
+            else {
+                snprintf(err_buf, err_size, "'gradient' 'direction' must be 'horizontal' or 'vertical'");
+                return false;
+            }
+        }
+
+        draw_gradient_buf(buf, bw, bh, x, y, w, h, from_c, to_c, vertical, alpha);
+        draw_gradient_buf(static_bg, bw, bh, x, y, w, h, from_c, to_c, vertical, alpha);
         return true;
     }
 
     snprintf(err_buf, err_size,
-             "unknown op '%s' (supported: line, rect, oval, polygon, text, pixel, clear, image, progress, sparkline, clock, countdown, icon)",
+             "unknown op '%s' (supported: line, rect, oval, polygon, text, pixel, clear, image, progress, sparkline, clock, countdown, icon, gradient)",
              op);
     return false;
 }

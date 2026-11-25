@@ -462,6 +462,17 @@ Draws one of 16 built-in 8×8 monochrome pixel icons (`check`, `cross`, `bell`, 
 { "op": "icon", "name": "check", "x": 4, "y": 4, "color": "green", "scale": 1 }
 ```
 
+#### `gradient` & shape `alpha`
+
+Draws a horizontal (`"horizontal"`/`"h"`, default) or vertical (`"vertical"`/`"v"`) linear color gradient from `from` to `to` inside `(x, y, w, h)` (defaults to full display).
+
+All static shape ops (`pixel`, `line`, `rect`, `oval`, `polygon`, `icon`, `gradient`) also accept an optional `"alpha"` (`0.0..1.0`, default `1.0`) for smooth compositing over underlying pixels.
+
+```json
+{ "op": "gradient", "from": "#001040", "to": "#400020", "direction": "horizontal" }
+{ "op": "rect", "x": 0, "y": 0, "w": 72, "h": 16, "fill": "black", "alpha": 0.5 }
+```
+
 ### Fonts
 
 | `font` values | Glyph size | Advance | Supported characters | Fit on 72×16 |

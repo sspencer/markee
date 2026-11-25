@@ -2304,6 +2304,28 @@ static void test_widgets_api(void) {
         free(r.body);
     }
 
+    /* 7. Linear gradients & shape alpha blending */
+    {
+        const char *gr = "["
+            "{\"op\":\"gradient\",\"x\":0,\"y\":0,\"w\":72,\"h\":16,\"from\":\"#000000\",\"to\":\"#ff0000\",\"direction\":\"horizontal\"},"
+            "{\"op\":\"rect\",\"x\":0,\"y\":0,\"w\":10,\"h\":10,\"fill\":\"#0000ff\",\"alpha\":0.5}"
+            "]";
+        r = do_request(port, "POST", "/draw", "application/json", gr, strlen(gr));
+        assert(r.status == 200);
+        free(r.body);
+        /* (71,0) end of gradient -> pure red */
+        assert(display_get_pixel(&disp, 71, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 0 && pb == 0);
+        /* (0,0) black gradient blended 50% with blue -> (0, 0, ~128) */
+        assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 0 && pb >= 126 && pb <= 129);
+
+        const char *bad_alpha = "[{\"op\":\"rect\",\"x\":0,\"y\":0,\"w\":4,\"h\":4,\"fill\":\"red\",\"alpha\":1.5}]";
+        r = do_request(port, "POST", "/draw", "application/json", bad_alpha, strlen(bad_alpha));
+        assert(r.status == 400);
+        free(r.body);
+    }
+
     server_stop(srv);
     display_destroy(&disp);
     printf("[PASS] built-in widgets & scene transitions (progress, sparkline, clock, countdown, fade/wipe)\n");
