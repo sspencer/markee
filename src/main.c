@@ -11,6 +11,7 @@
 #include <time.h>
 
 #include "audio.h"
+#include "cli.h"
 #include "config.h"
 #include "display.h"
 #include "draw.h"
@@ -146,6 +147,14 @@ static void print_usage(const char *prog) {
            "  SPACE / ENTER           Emit an 'action' button event on GET /events\n"
            "  + / -                   Adjust brightness (+/- 10%%)\n"
            "  Q / ESC                 Quit\n\n"
+           "Client subcommands (talk to a running markee server):\n"
+           "  %s say <text> [--color C] [--bg C] [--scroll] [--chime|--ding|--bell]\n"
+           "  %s notify <text> [--ttl S] [--color C] [--border C] [--sound S]\n"
+           "  %s gif <file.gif> [--fill C] [--fit crop|contain|stretch] [--speed S] [--loop N]\n"
+           "  %s timer <duration> [--color C] [--sound S]   # e.g. 25m, 90s, 1h30m\n"
+           "  %s clock [--color C] [--format 24h|24hm|12h|12hm]\n"
+           "  %s alert [ding|chime|bell] [--volume 0..100]\n"
+           "  %s clear | info\n\n"
            "Examples:\n"
            "  %s                           # Default 72x16 square LEDs at 1.0x zoom\n"
            "  %s --circle --zoom 2         # 72x16 circular LEDs at 2x size\n"
@@ -157,6 +166,7 @@ static void print_usage(const char *prog) {
            MARKEE_MIN_DIM, MARKEE_MAX_DIM,
            MARKEE_DEFAULT_ZOOM, MARKEE_MIN_ZOOM, MARKEE_MAX_ZOOM,
            MARKEE_DEFAULT_HOST, MARKEE_DEFAULT_PORT,
+           prog, prog, prog, prog, prog, prog, prog,
            prog, prog, prog, prog);
 }
 
@@ -183,6 +193,11 @@ static void save_snapshot_png(MarkeeDisplay *disp, const char *filename) {
 }
 
 int main(int argc, char **argv) {
+    if (argc >= 2 && cli_is_subcommand(argv[1])) {
+        signal(SIGPIPE, SIG_IGN);
+        return cli_run(argc, argv);
+    }
+
     int width = MARKEE_DEFAULT_WIDTH;
     int height = MARKEE_DEFAULT_HEIGHT;
     float zoom = MARKEE_DEFAULT_ZOOM;

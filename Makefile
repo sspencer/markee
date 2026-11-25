@@ -21,6 +21,7 @@ BUILD_DIR   := build
 
 SRCS        := $(SRC_DIR)/main.c \
                $(SRC_DIR)/audio.c \
+               $(SRC_DIR)/cli.c \
                $(SRC_DIR)/display.c \
                $(SRC_DIR)/draw.c \
                $(SRC_DIR)/gif.c \
@@ -30,6 +31,7 @@ SRCS        := $(SRC_DIR)/main.c \
                $(SRC_DIR)/webui.c
 
 CORE_SRCS   := $(SRC_DIR)/audio.c \
+               $(SRC_DIR)/cli.c \
                $(SRC_DIR)/display.c \
                $(SRC_DIR)/draw.c \
                $(SRC_DIR)/gif.c \

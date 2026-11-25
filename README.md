@@ -123,6 +123,21 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 ./markee --headless --mute -p 0      # Silent API-only mode on any free port (CI/scripts)
 ```
 
+### Client CLI subcommands
+
+You can drive a running `markee` instance directly from the same binary without crafting `curl` or JSON by hand (reads `MARKEE_HOST`, `MARKEE_PORT`, `MARKEE_TOKEN`, or `-H`/`-p`/`--token`):
+
+```bash
+./markee say "BUILD OK!" --color green --bg "#001408" --chime
+./markee notify "DEPLOY DONE" --ttl 5 --border green --sound bell
+./markee gif examples/cat_chase-72x16.gif --fill white
+./markee timer 25m --color amber --sound chime
+./markee clock --color warmwhite
+./markee alert chime --volume 75
+./markee clear
+./markee info
+```
+
 ### Keyboard shortcuts
 
 Available when running in GUI mode:

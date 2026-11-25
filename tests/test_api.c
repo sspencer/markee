@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "audio.h"
+#include "cli.h"
 #include "config.h"
 #include "display.h"
 #include "draw.h"
@@ -2332,9 +2333,29 @@ static void test_widgets_api(void) {
         free(r.body);
     }
 
+    /* 8. CLI helper subcommand & duration parsing */
+    {
+        assert(cli_is_subcommand("say"));
+        assert(cli_is_subcommand("notify"));
+        assert(cli_is_subcommand("gif"));
+        assert(cli_is_subcommand("timer"));
+        assert(cli_is_subcommand("clock"));
+        assert(cli_is_subcommand("alert"));
+        assert(cli_is_subcommand("clear"));
+        assert(cli_is_subcommand("info"));
+        assert(!cli_is_subcommand("--demo"));
+
+        double sec = 0.0;
+        assert(cli_parse_duration_sec("90", &sec) && fabs(sec - 90.0) < 0.01);
+        assert(cli_parse_duration_sec("25m", &sec) && fabs(sec - 1500.0) < 0.01);
+        assert(cli_parse_duration_sec("1h30m15s", &sec) && fabs(sec - 5415.0) < 0.01);
+        assert(!cli_parse_duration_sec("0", &sec));
+        assert(!cli_parse_duration_sec("abc", &sec));
+    }
+
     server_stop(srv);
     display_destroy(&disp);
-    printf("[PASS] built-in widgets & scene transitions (progress, sparkline, clock, countdown, fade/wipe)\n");
+    printf("[PASS] built-in widgets, transitions, icons, gradients, alpha & CLI helpers\n");
 }
 
 int main(void) {
