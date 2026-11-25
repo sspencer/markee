@@ -4,6 +4,8 @@ A C11 + [raylib](https://www.raylib.com/) desktop simulator for a **72×16, 24-b
 
 `markee` renders the LED panel inside a molded plastic enclosure calibrated to appear **~6.35 inches wide** on screen, refreshes at **60 Hz**, and exposes a lightweight **HTTP/1.1 API** so any script or program can draw shapes and scrolling text, push 72×16 PNGs or raw 24-bit RGB frames, trigger gentle alert chimes, and read back the current display as a PNG.
 
+![markee running in demo mode](docs/demo.png)
+
 ## Inspiration
 
 `markee` began as a quick software take on the [BUSY Bar](https://busy.app/products/busy-bar)—built to get a feel for how a small, glanceable desk LED bar works in practice and what's fun to drive on it.
@@ -66,7 +68,7 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | `make run` | Build and launch `./markee` |
 | `make test` | Build and run the C unit & socket API test suite (`./test_api`) |
 | `make debug` / `make release` | Clean rebuild with `-O0 -g` or `-O3` |
-| `sudo make install` / `uninstall` | Install or remove in `/usr/local/bin` (override with `PREFIX=` / `DESTDIR=`) |
+| `make install` / `make uninstall` | Install or remove in `~/.local/bin` (falls back to `/usr/local/bin`; override with `PREFIX=` / `DESTDIR=`) |
 | `make clean` / `make distclean` | Remove build artifacts (`distclean` also deletes `snapshot.png`) |
 | `make help` | List all targets |
 
@@ -98,7 +100,7 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 | `-H, --host <addr>` | Bind address: IPv4, IPv6 (`::1`, `::`), or hostname (`localhost`). Note: the API has **no authentication** | `127.0.0.1` |
 | `-p, --port <port>` | TCP port (`0..65535`; `0` picks a free ephemeral port). Overrides `MARKEE_PORT` | `8080` (or `$MARKEE_PORT`) |
 | `--dpi <value>` | Override monitor logical DPI (`> 0`) if EDID physical sizing is wrong | Auto-detected (fallback `110`) |
-| `--blank` | Start with a blank black display instead of the built-in startup demo | Off |
+| `--demo` | Start with the built-in 60 Hz demo animation instead of a blank display | Off |
 | `--mute` | Disable alert sound playback. Alias: `--no-audio` | Off |
 | `--headless` | Run the API server without a GUI window (60 Hz demo, scrolling text, `GET /frame`, and alert audio still run) | Off |
 | `-h, --help` | Show usage and keyboard shortcuts, then exit | — |
@@ -106,11 +108,12 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 **Examples:**
 
 ```bash
-./markee                             # Default 72x16 square LEDs (~6.35" wide)
+./markee                             # Default 72x16 blank display (~6.35" wide)
+./markee --demo                      # Launch with the built-in demo animation
 ./markee --circle --zoom 2           # Circular LEDs at 2x size
 ./markee -r 128x32 -z 0.75           # Custom 128x32 matrix at 0.75x zoom
 ./markee -m amber                    # Amber phosphor monochrome look
-./markee --headless --blank --mute -p 0   # Silent API-only mode on any free port (CI/scripts)
+./markee --headless --mute -p 0      # Silent API-only mode on any free port (CI/scripts)
 ```
 
 ### Keyboard shortcuts
@@ -121,7 +124,7 @@ Available when running in GUI mode:
 |---|---|
 | `1` / `2` / `3` | Preview the 3 built-in alert sounds (`ding`, `chime`, `bell`; keypad `1–3` also work) |
 | `C` | Clear display to black |
-| `D` | Toggle the built-in startup animation |
+| `D` | Toggle the built-in demo animation |
 | `M` | Toggle the monochrome filter (reuses last tint color, or amber `#ffbf00`) |
 | `P` | Toggle pixel shape (`square` / `circle`) |
 | `S` | Save current frame to `snapshot.png` in the working directory (includes monochrome filter if on) |
@@ -130,7 +133,7 @@ Available when running in GUI mode:
 
 ## HTTP API
 
-`markee` serves an HTTP/1.1 API on `http://127.0.0.1:8080` by default, with persistent Keep-Alive connections and open CORS. Any write to the framebuffer automatically stops the startup demo.
+`markee` serves an HTTP/1.1 API on `http://127.0.0.1:8080` by default, with persistent Keep-Alive connections and open CORS. Any write to the framebuffer automatically stops the demo animation if it is running.
 
 **See [`docs/API.md`](docs/API.md) for the complete reference**—including every parameter, draw op, font, scrolling rule, color format, protocol limit, and client recipe.
 
@@ -145,7 +148,7 @@ Available when running in GUI mode:
 | `GET` `POST` `PUT` | [`/pixel`](docs/API.md#pixels) | Read or set a single pixel |
 | `GET` `POST` `PUT` | [`/brightness`](docs/API.md#post-brightness) | Read or set GUI LED brightness (`0–100`; readback unaffected) |
 | `GET` `POST` `PUT` `DELETE` | [`/monochrome`](docs/API.md#post-monochrome) | Read or toggle the non-destructive BT.709 tint filter |
-| `POST` | [`/demo`](docs/API.md#post-demo) | Turn the startup animation on or off |
+| `POST` | [`/demo`](docs/API.md#post-demo) | Turn the built-in demo animation on or off |
 | `GET` `POST` | [`/alert`](docs/API.md#alert-sounds) | List or play the 3 gentle alert sounds (`POST /alert/1`..`3` or `ding`/`chime`/`bell`) |
 
 ### More `curl` examples
@@ -218,7 +221,8 @@ markee/
 ├── Makefile             # Build, test, run, install, clean targets (`make help`)
 ├── README.md            # Overview, build, and CLI usage
 ├── docs/
-│   └── API.md           # Complete HTTP API reference and recipes
+│   ├── API.md           # Complete HTTP API reference and recipes
+│   └── demo.png         # Screenshot of markee running in --demo mode
 ├── include/
 │   ├── audio.h          # Procedural alert sound synthesis (ding/chime/bell) and playback queue
 │   ├── config.h         # Display defaults and HTTP limits (72x16, 6.35", 60 Hz, body/header caps)

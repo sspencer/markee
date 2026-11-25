@@ -4,8 +4,15 @@ TARGET      := markee
 TEST_TARGET := test_api
 
 CC          ?= cc
-PREFIX      ?= /usr/local
-BINDIR      := $(PREFIX)/bin
+DEFAULT_PREFIX := $(shell \
+	if [ -n "$$HOME" ]; then \
+		if [ -d "$$HOME/.local/bin" ] && [ -w "$$HOME/.local/bin" ]; then echo "$$HOME/.local"; \
+		elif [ ! -e "$$HOME/.local/bin" ] && [ -d "$$HOME/.local" ] && [ -w "$$HOME/.local" ]; then echo "$$HOME/.local"; \
+		elif [ ! -e "$$HOME/.local" ] && [ -w "$$HOME" ]; then echo "$$HOME/.local"; \
+		else echo "/usr/local"; fi; \
+	else echo "/usr/local"; fi)
+PREFIX      ?= $(DEFAULT_PREFIX)
+BINDIR      ?= $(PREFIX)/bin
 
 SRC_DIR     := src
 INC_DIR     := include
@@ -86,11 +93,17 @@ test: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
 install: $(TARGET)
-	install -d $(DESTDIR)$(BINDIR)
-	install -m 0755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
+	install -d "$(DESTDIR)$(BINDIR)"
+	install -m 0755 $(TARGET) "$(DESTDIR)$(BINDIR)/$(TARGET)"
+	@if [ -z "$(DESTDIR)" ]; then \
+		case ":$$PATH:" in \
+			*":$(BINDIR):"*) ;; \
+			*) echo "Note: $(BINDIR) is not in your PATH" ;; \
+		esac; \
+	fi
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
+	rm -f "$(DESTDIR)$(BINDIR)/$(TARGET)"
 
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET) $(TEST_TARGET)

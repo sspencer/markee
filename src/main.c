@@ -103,14 +103,14 @@ static void print_usage(const char *prog) {
            "  -H, --host <addr>       Bind address: IPv4, IPv6, or hostname (default: %s)\n"
            "  -p, --port <port>       TCP port to listen on (default: %d, or MARKEE_PORT)\n"
            "      --dpi <value>       Override monitor logical DPI for physical sizing\n"
-           "      --blank             Start with a blank display instead of the startup demo\n"
+           "      --demo              Start with the built-in demo animation (default: blank)\n"
            "      --mute              Disable alert sound playback (alias: --no-audio)\n"
            "      --headless          Run API server only without opening a GUI window\n"
            "  -h, --help              Show this help message and exit\n\n"
            "Keyboard shortcuts (GUI mode):\n"
            "  1 / 2 / 3               Preview alert sounds (ding, chime, bell)\n"
            "  C                       Clear display\n"
-           "  D                       Toggle startup demo animation\n"
+           "  D                       Toggle built-in demo animation\n"
            "  M                       Toggle monochrome filter on/off (default amber #ffbf00)\n"
            "  P                       Toggle pixel shape (square / circle)\n"
            "  S                       Save current frame to snapshot.png\n"
@@ -162,7 +162,7 @@ int main(int argc, char **argv) {
     const char *host = MARKEE_DEFAULT_HOST;
     uint16_t port = MARKEE_DEFAULT_PORT;
     float override_dpi = 0.0f;
-    bool start_demo = true;
+    bool start_demo = false;
     bool mute = false;
     bool headless = false;
 
@@ -215,6 +215,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Invalid DPI value '%s' (expected a positive number)\n", argv[i]);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--demo") == 0) {
+            start_demo = true;
         } else if (strcmp(argv[i], "--blank") == 0) {
             start_demo = false;
         } else if (strcmp(argv[i], "--mute") == 0 || strcmp(argv[i], "--no-audio") == 0) {

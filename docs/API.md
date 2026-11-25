@@ -86,7 +86,7 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | | `GET` | [`/monochrome`](#get-monochrome) (`/mono`) | Read monochrome tint filter state |
 | | `POST` `PUT` | [`/monochrome`](#post-monochrome) (`/mono`) | Enable or disable the monochrome tint filter |
 | | `DELETE` | [`/monochrome`](#delete-monochrome) (`/mono`) | Disable the monochrome tint filter |
-| | `POST` | [`/demo`](#post-demo) | Turn the built-in startup animation on or off |
+| | `POST` | [`/demo`](#post-demo) | Turn the built-in demo animation on or off |
 | **Alerts** | `GET` | [`/alert`](#get-alert) (`/alerts`, `/api/alert`, `/api/alerts`) | List built-in alert sounds and audio status |
 | | `POST` | [`/alert`](#post-alert), `/alert/<id\|name>` (`/api/alert`) | Play one of the 3 gentle alert sounds |
 | **CORS** | `OPTIONS` | `*` | CORS preflight (`204 No Content`) |
@@ -117,7 +117,7 @@ Understanding how each layer interacts makes every endpoint predictable:
 ```
 
 - **Framebuffer writes** (`POST /frame`, `POST /draw`, `POST /fill`, `POST /pixel`, `DELETE /frame`, `POST /clear`):
-  - Turn off the startup demo animation.
+  - Turn off the demo animation (if active).
   - Stop any active [scrolling text](#scrolling-text) (unless `/draw` defines a new scrolling `text` op).
   - Increment `frames_received` in [`GET /info`](#get-info).
 - **Monochrome filter** is applied non-destructively whenever pixels are read (GUI, `GET /frame`, `GET /pixel`). The underlying RGB framebuffer keeps full color, so disabling the filter restores the original colors immediately.
@@ -179,7 +179,7 @@ curl http://127.0.0.1:8080/info
   "physical_width_inches": 6.35,
   "brightness": 100,
   "monochrome": null,
-  "demo_active": true,
+  "demo_active": false,
   "frames_received": 0,
   "audio_ready": true,
   "alert_sounds": 3
@@ -196,7 +196,7 @@ curl http://127.0.0.1:8080/info
 | `physical_width_inches` | number | Simulated physical width (`6.35` at 72 px wide; scales with `width` at fixed LED pitch) |
 | `brightness` | int | GUI brightness (`0–100`) |
 | `monochrome` | string \| null | Active tint color as `"#rrggbb"`, or `null` when off |
-| `demo_active` | bool | Whether the built-in startup animation is running |
+| `demo_active` | bool | Whether the built-in demo animation is running |
 | `frames_received` | int | Count of successful framebuffer writes since startup |
 | `audio_ready` | bool | Whether an audio output device is ready for alert chimes |
 | `alert_sounds` | int | Number of built-in alert sounds (`3`) |
@@ -609,7 +609,7 @@ Turns the monochrome filter off. Returns `{"ok":true,"enabled":false,"color":nul
 
 **Methods:** `POST`
 
-Starts or stops the built-in 60 Hz startup animation.
+Starts or stops the built-in 60 Hz demo animation (off by default unless launched with `--demo`).
 
 | Request | Behavior |
 |---|---|
