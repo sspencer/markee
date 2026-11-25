@@ -114,6 +114,9 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 | `--demo` | Start with the built-in 60 Hz demo animation instead of a blank display | Off |
 | `--mute` | Disable alert sound playback. Alias: `--no-audio` | Off |
 | `--headless` | Run the API server without a GUI window (60 Hz demo, scrolling text, `GET /frame`, and alert audio still run) | Off |
+| `--config <path>` | Load default options from an INI file (`$XDG_CONFIG_HOME/markee/config.ini` or `~/.config/markee/config.ini` auto-loaded when present; CLI flags override) | Auto |
+| `--no-config` | Skip loading the default config file | Off |
+| `--save-position` | Persist the final GUI window `position = X,Y` to the active config file on exit | Off |
 | `-h, --help` | Show usage and keyboard shortcuts, then exit | — |
 
 **Examples:**
@@ -125,6 +128,23 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 ./markee -r 128x32 -z 0.75           # Custom 128x32 matrix at 0.75x zoom
 ./markee -m amber                    # Amber phosphor monochrome look
 ./markee --headless --mute -p 0      # Silent API-only mode on any free port (CI/scripts)
+```
+
+### Configuration file
+
+`markee` automatically reads `~/.config/markee/config.ini` (or `$XDG_CONFIG_HOME/markee/config.ini`, or `--config <path>`) on startup; any CLI flags override the config file:
+
+```ini
+# ~/.config/markee/config.ini
+zoom = 1.25
+shape = circle
+case = charcoal
+always_on_top = true
+borderless = true
+corner = top-right
+idle_dim = 300
+idle_brightness = 20
+save_position = true
 ```
 
 ### Client CLI subcommands

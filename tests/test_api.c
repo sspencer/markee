@@ -19,6 +19,7 @@
 #include "display.h"
 #include "draw.h"
 #include "gif.h"
+#include "ini.h"
 #include "json.h"
 #include "raylib.h"
 #include "renderer.h"
@@ -2444,6 +2445,70 @@ static void test_widgets_api(void) {
     printf("[PASS] built-in widgets, transitions, icons, gradients, alpha, CLI, token auth & GIF recording\n");
 }
 
+static void test_ini_config(void) {
+    MarkeeConfig cfg;
+    markee_config_defaults(&cfg);
+    assert(cfg.width == 72 && cfg.height == 16 && cfg.port == 8080);
+
+    const char *sample =
+        "# markee sample config\n"
+        "[markee]\n"
+        "resolution = 128x32\n"
+        "zoom = 1.5\n"
+        "shape = circle\n"
+        "monochrome = #ffbf00 ; amber\n"
+        "host = 0.0.0.0\n"
+        "port = 9090\n"
+        "token = \"my-secret-token\"\n"
+        "always_on_top = true\n"
+        "borderless = yes\n"
+        "corner = top-right\n"
+        "case = charcoal\n"
+        "idle_dim = 120\n"
+        "idle_brightness = 15\n"
+        "demo = on\n"
+        "mute = true\n"
+        "save_position = true\n";
+    char err[128] = {0};
+    assert(markee_config_parse_string(sample, &cfg, err, sizeof(err)));
+    assert(cfg.width == 128 && cfg.height == 32);
+    assert(fabsf(cfg.zoom - 1.5f) < 0.01f);
+    assert(cfg.pixel_shape == MARKEE_PIXEL_CIRCLE);
+    assert(cfg.mono_enabled && cfg.mono_color.r == 255 && cfg.mono_color.g == 191 && cfg.mono_color.b == 0);
+    assert(strcmp(cfg.host, "0.0.0.0") == 0);
+    assert(cfg.port == 9090);
+    assert(strcmp(cfg.token, "my-secret-token") == 0);
+    assert(cfg.always_on_top && cfg.borderless && cfg.start_demo && cfg.mute && cfg.save_position);
+    assert(cfg.corner == MARKEE_CORNER_TOP_RIGHT);
+    assert(cfg.case_theme == MARKEE_CASE_CHARCOAL);
+    assert(fabs(cfg.idle_dim_sec - 120.0) < 0.01 && cfg.idle_brightness == 15);
+
+    /* Reject unknown key and bad value */
+    MarkeeConfig bad;
+    markee_config_defaults(&bad);
+    assert(!markee_config_parse_string("bogus_key = 1\n", &bad, err, sizeof(err)));
+    assert(!markee_config_parse_string("port = 99999\n", &bad, err, sizeof(err)));
+
+    /* Save position round-trip preserving existing keys */
+    const char *tmp_path = "/tmp/markee_test_config.ini";
+    FILE *fp = fopen(tmp_path, "wb");
+    assert(fp != NULL);
+    fprintf(fp, "# keep comment\nzoom = 2.0\nposition = 10,20\ncase = retro\n");
+    fclose(fp);
+
+    assert(markee_config_save_position(tmp_path, 345, 678));
+
+    MarkeeConfig loaded;
+    markee_config_defaults(&loaded);
+    assert(markee_config_load_file(tmp_path, &loaded, NULL, err, sizeof(err)));
+    assert(fabsf(loaded.zoom - 2.0f) < 0.01f);
+    assert(loaded.case_theme == MARKEE_CASE_RETRO);
+    assert(loaded.has_position && loaded.pos_x == 345 && loaded.pos_y == 678);
+    remove(tmp_path);
+
+    printf("[PASS] INI config file parsing and window position persistence\n");
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     SetTraceLogLevel(LOG_ERROR);
@@ -2464,6 +2529,7 @@ int main(void) {
     test_events_api();
     test_notify_ttl_api();
     test_widgets_api();
+    test_ini_config();
 
     printf("\nAll markee tests passed!\n");
     return 0;

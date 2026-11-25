@@ -15,6 +15,7 @@
 #include "config.h"
 #include "display.h"
 #include "draw.h"
+#include "ini.h"
 #include "raylib.h"
 #include "renderer.h"
 #include "server.h"
@@ -135,6 +136,10 @@ static void print_usage(const char *prog) {
            "      --demo              Start with the built-in demo animation (default: blank)\n"
            "      --mute              Disable alert sound playback (alias: --no-audio)\n"
            "      --headless          Run API server only without opening a GUI window\n"
+           "      --config <path>     Load defaults from an INI config file (default:\n"
+           "                          ~/.config/markee/config.ini if present)\n"
+           "      --no-config         Ignore ~/.config/markee/config.ini\n"
+           "      --save-position     Save window X,Y position to config file on exit\n"
            "  -h, --help              Show this help message and exit\n\n"
            "Keyboard shortcuts (GUI mode):\n"
            "  1 / 2 / 3               Preview alert sounds (ding, chime, bell)\n"
@@ -200,27 +205,64 @@ int main(int argc, char **argv) {
         return cli_run(argc, argv);
     }
 
-    int width = MARKEE_DEFAULT_WIDTH;
-    int height = MARKEE_DEFAULT_HEIGHT;
-    float zoom = MARKEE_DEFAULT_ZOOM;
-    MarkeePixelShape pixel_shape = MARKEE_PIXEL_SQUARE;
-    bool mono_enabled = false;
-    MarkeeColor mono_color = {255, 191, 0}; /* Default amber if toggled with 'M' */
-    const char *host = MARKEE_DEFAULT_HOST;
-    uint16_t port = MARKEE_DEFAULT_PORT;
-    const char *auth_token = getenv("MARKEE_TOKEN");
-    float override_dpi = 0.0f;
-    bool always_on_top = false;
-    bool borderless = false;
-    bool has_position = false;
-    int pos_x = 0, pos_y = 0;
-    MarkeeWindowCorner corner = MARKEE_CORNER_CENTER;
-    MarkeeCaseTheme case_theme = MARKEE_CASE_WHITE;
-    double idle_dim_sec = 0.0;
-    uint8_t idle_brightness = 20;
-    bool start_demo = false;
-    bool mute = false;
-    bool headless = false;
+    MarkeeConfig cfg;
+    markee_config_defaults(&cfg);
+
+    /* Pre-scan for --config / --no-config so config file defaults apply before CLI overrides */
+    const char *explicit_config = NULL;
+    bool skip_config = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--no-config") == 0) {
+            skip_config = true;
+        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            explicit_config = argv[++i];
+        }
+    }
+
+    char active_config_path[1024] = {0};
+    if (!skip_config) {
+        if (explicit_config) {
+            snprintf(active_config_path, sizeof(active_config_path), "%s", explicit_config);
+            char cerr[256] = {0};
+            if (!markee_config_load_file(active_config_path, &cfg, NULL, cerr, sizeof(cerr))) {
+                fprintf(stderr, "Config error (%s): %s\n", active_config_path, cerr);
+                return 1;
+            }
+        } else if (markee_config_default_path(active_config_path, sizeof(active_config_path))) {
+            bool not_found = false;
+            char cerr[256] = {0};
+            if (!markee_config_load_file(active_config_path, &cfg, &not_found, cerr, sizeof(cerr)) &&
+                !not_found) {
+                fprintf(stderr, "Warning: ignoring %s (%s)\n", active_config_path, cerr);
+            }
+        }
+    }
+
+    int width = cfg.width;
+    int height = cfg.height;
+    float zoom = cfg.zoom;
+    MarkeePixelShape pixel_shape = cfg.pixel_shape;
+    bool mono_enabled = cfg.mono_enabled;
+    MarkeeColor mono_color = cfg.mono_color;
+    const char *host = cfg.host;
+    uint16_t port = cfg.port;
+    const char *auth_token = cfg.token[0] ? cfg.token : NULL;
+    float override_dpi = cfg.override_dpi;
+    bool always_on_top = cfg.always_on_top;
+    bool borderless = cfg.borderless;
+    bool has_position = cfg.has_position;
+    int pos_x = cfg.pos_x, pos_y = cfg.pos_y;
+    MarkeeWindowCorner corner = cfg.corner;
+    MarkeeCaseTheme case_theme = cfg.case_theme;
+    double idle_dim_sec = cfg.idle_dim_sec;
+    uint8_t idle_brightness = cfg.idle_brightness;
+    bool start_demo = cfg.start_demo;
+    bool mute = cfg.mute;
+    bool headless = cfg.headless;
+    bool save_position = cfg.save_position;
+
+    const char *env_token = getenv("MARKEE_TOKEN");
+    if (env_token && *env_token) auth_token = env_token;
 
     const char *env_port = getenv("MARKEE_PORT");
     if (env_port && *env_port && !parse_port(env_port, &port)) {
@@ -320,6 +362,16 @@ int main(int argc, char **argv) {
             mute = true;
         } else if (strcmp(argv[i], "--headless") == 0) {
             headless = true;
+        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            i++; /* already loaded in pre-scan */
+        } else if (strcmp(argv[i], "--no-config") == 0) {
+            /* already handled in pre-scan */
+        } else if (strcmp(argv[i], "--save-position") == 0) {
+            save_position = true;
+        } else if (strcmp(argv[i], "--no-always-on-top") == 0) {
+            always_on_top = false;
+        } else if (strcmp(argv[i], "--no-borderless") == 0) {
+            borderless = false;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -536,6 +588,13 @@ int main(int argc, char **argv) {
             BeginDrawing();
             renderer_draw(&layout, frame_buf, brightness);
             EndDrawing();
+        }
+
+        if (save_position && active_config_path[0]) {
+            Vector2 wp = GetWindowPosition();
+            if (!markee_config_save_position(active_config_path, (int)wp.x, (int)wp.y)) {
+                fprintf(stderr, "Warning: failed to save window position to %s\n", active_config_path);
+            }
         }
 
         CloseWindow();

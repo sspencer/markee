@@ -56,7 +56,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 
 - [x] **CI workflow (GitHub Actions on macOS & Linux):** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds with `-Wall -Wextra -Wpedantic -Werror`, runs `./test_api`, runs `make sanitize` (ASan + UBSan), and validates `examples/*.py` on `macos-latest` and `ubuntu-latest`.
 - [x] **Fuzz testing for C parsers:** LibFuzzer + standalone ASan/UBSan smoke harnesses in [`tests/fuzz/`](../tests/fuzz/) covering `gif.c` (`fuzz_gif.c`), `json.c` (`fuzz_json.c`), `draw.c` + base64/PNG/GIF `image` op (`fuzz_draw.c`), and HTTP request parsing in `server.c` (`fuzz_http.c`), runnable via `make fuzz-smoke` and `make fuzz`.
-- [ ] **Config file support (`~/.config/markee/config.ini`):** Persist default zoom, pixel shape, monochrome tint, port, and widget flags without repeating CLI arguments.
+- [x] **Config file support (`~/.config/markee/config.ini`):** [`include/ini.h`](../include/ini.h) / [`src/ini.c`](../src/ini.c) loads defaults from `$XDG_CONFIG_HOME/markee/config.ini`, `~/.config/markee/config.ini`, or `--config <path>` (`--no-config` to skip), with CLI overrides and `--save-position` / `save_position = true` window position persistence on exit.
 - [ ] **Packaging & native bundles:**
   - macOS `.app` bundle (with optional menu bar tray icon and "launch at login").
   - Homebrew formula (`brew install ...`) and Linux `.deb` / release tarballs.
