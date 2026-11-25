@@ -23,6 +23,7 @@ SRCS        := $(SRC_DIR)/main.c \
                $(SRC_DIR)/audio.c \
                $(SRC_DIR)/display.c \
                $(SRC_DIR)/draw.c \
+               $(SRC_DIR)/gif.c \
                $(SRC_DIR)/json.c \
                $(SRC_DIR)/renderer.c \
                $(SRC_DIR)/server.c
@@ -30,6 +31,7 @@ SRCS        := $(SRC_DIR)/main.c \
 CORE_SRCS   := $(SRC_DIR)/audio.c \
                $(SRC_DIR)/display.c \
                $(SRC_DIR)/draw.c \
+               $(SRC_DIR)/gif.c \
                $(SRC_DIR)/json.c \
                $(SRC_DIR)/renderer.c \
                $(SRC_DIR)/server.c

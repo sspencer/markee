@@ -28,6 +28,10 @@
   - [POST /frame](#post-frame)
   - [DELETE /frame, POST /clear](#delete-frame-post-clear)
   - [POST /fill](#post-fill)
+- [Animated GIFs](#animated-gifs)
+  - [POST /animate](#post-animate)
+  - [GET /animate](#get-animate)
+  - [DELETE /animate](#delete-animate)
 - [Pixels](#pixels)
   - [GET /pixel](#get-pixel)
   - [POST /pixel](#post-pixel)
@@ -79,6 +83,9 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | | `DELETE` | [`/frame`](#delete-frame-post-clear) (`/api/frame`) | Clear display to black |
 | | `POST` | [`/clear`](#delete-frame-post-clear) | Clear display to black |
 | | `POST` | [`/fill`](#post-fill) | Fill the entire display with one color |
+| **GIFs** | `POST` `PUT` | [`/animate`](#post-animate) (`/api/animate`) | Play an animated (or static) GIF, center-cropped or centered to fit |
+| | `GET` | [`/animate`](#get-animate) (`/api/animate`) | Check active GIF animation status and current frame |
+| | `DELETE` | [`/animate`](#delete-animate) (`/api/animate`) | Stop the active GIF animation (keeps current frame on screen) |
 | **Pixels** | `GET` | [`/pixel`](#get-pixel) | Read a single pixel |
 | | `POST` `PUT` | [`/pixel`](#post-pixel) | Set a single pixel |
 | **Settings** | `GET` | [`/brightness`](#get-brightness) | Read GUI brightness (`0–100`) |
@@ -180,6 +187,7 @@ curl http://127.0.0.1:8080/info
   "brightness": 100,
   "monochrome": null,
   "demo_active": false,
+  "animation_active": false,
   "frames_received": 0,
   "audio_ready": true,
   "alert_sounds": 3
@@ -197,6 +205,7 @@ curl http://127.0.0.1:8080/info
 | `brightness` | int | GUI brightness (`0–100`) |
 | `monochrome` | string \| null | Active tint color as `"#rrggbb"`, or `null` when off |
 | `demo_active` | bool | Whether the built-in demo animation is running |
+| `animation_active` | bool | Whether an animated GIF uploaded via `/animate` is currently playing |
 | `frames_received` | int | Count of successful framebuffer writes since startup |
 | `audio_ready` | bool | Whether an audio output device is ready for alert chimes |
 | `alert_sounds` | int | Number of built-in alert sounds (`3`) |
@@ -356,6 +365,23 @@ Draws single-line bitmap text without wrapping (overflowing glyphs are clipped).
 { "op": "text", "x": 16, "y": 4, "text": "READY", "font": "6x8", "color": "warmwhite" }
 ```
 
+#### `gif`
+
+Draws a static or animated GIF87a/GIF89a sprite placed at `(x, y)` (top-left origin), clipped to the display bounds. Up to **8** animated `gif` ops can run simultaneously in a `/draw` batch, and they can be combined freely with static shapes, text, and scrolling text.
+
+| Field | Default | Description |
+|---|---|---|
+| `data` | **required** | Base64-encoded GIF bytes (optional `data:image/gif;base64,` URI prefix accepted; whitespace ignored) |
+| `x`, `y` | `0` | Top-left placement on the display (may be negative; clipped to display bounds) |
+| `loop` | GIF setting | `0` (or `true`) = loop forever, `1` (or `false`) = play once and hold last frame, `N > 0` = play `N` times. If omitted or `null`, honors `NETSCAPE2.0` (multi-frame GIFs without `NETSCAPE2.0` loop infinitely) |
+| `fill` | transparent (`none`) | Color shown beneath transparent GIF pixels inside the GIF's `(x, y, w, h)` rectangle (any [color format](#color-formats) including `[r,g,b]`). When omitted, `null`, `"none"`, or `"transparent"`, underlying canvas pixels show through |
+
+```json
+{ "op": "gif", "x": 2, "y": 2, "data": "R0lGODlh...", "loop": 0, "fill": "white" }
+```
+
+**Validation errors (`400`):** missing/empty `data`, invalid base64, invalid/corrupt GIF, negative or non-integer `loop`, invalid `fill` color, or more than 8 animated `gif` ops in a single batch.
+
 ### Fonts
 
 | `font` values | Glyph size | Advance | Supported characters | Fit on 72×16 |
@@ -474,6 +500,75 @@ curl -X POST http://127.0.0.1:8080/fill -d '{"r":0,"g":32,"b":64}'
 ```json
 {"ok":true,"r":242,"g":92,"b":25,"hex":"#f25c19"}
 ```
+
+---
+
+## Animated GIFs
+
+### POST /animate
+
+**Methods:** `POST`, `PUT` · **Alias:** `/api/animate`
+
+Decodes a GIF87a or GIF89a image (animated or static) and plays it on the LED matrix. Frame 0 is displayed immediately, and subsequent frames advance in `markee`'s 60 Hz loop using each frame's own delay time.
+
+**Sizing (per axis, independently):**
+- **Too big:** center-cropped to the display resolution (`W×H`).
+- **Too small:** centered on the fill color (black by default).
+- **Mixed:** e.g. a `100×8` GIF on a `72×16` display is center-cropped horizontally and centered vertically.
+
+**Supported GIF features:** Global and per-frame Local Color Tables, interlacing, sub-frame rectangles, 1-bit transparency (composited over the `fill` color, black by default), all 4 disposal methods, per-frame delays (delays `< 20 ms` are clamped to `100 ms` matching standard browser behavior), and `NETSCAPE2.0` loop counts.
+
+**Optional query parameters:**
+- `?fill=<color>` — background color displayed beneath transparent GIF pixels and centered margins (accepts any [color string](#color-formats) such as `white`, `0x202028`, `e0e0e0`, `amber`; defaults to black `#000000`).
+- `?loop=<n>` — override loop count (`0` = loop forever, `1` = play once and hold last frame, `N` = play `N` times). If omitted, honors the GIF's `NETSCAPE2.0` loop count (multi-frame GIFs without `NETSCAPE2.0` loop infinitely).
+
+```bash
+# Play an animated GIF (use --data-binary so curl does not alter binary bytes)
+curl -X POST --data-binary @nyan.gif http://127.0.0.1:8080/animate
+
+# Composite a dark-foreground transparent GIF over a light background
+curl -X POST --data-binary @examples/cat_chase1.gif "http://127.0.0.1:8080/animate?fill=white"
+
+# Play once over a custom hex background and hold on the last frame
+curl -X POST --data-binary @intro.gif "http://127.0.0.1:8080/animate?fill=0x303040&loop=1"
+```
+
+```json
+{
+  "ok": true,
+  "format": "gif",
+  "width": 72,
+  "height": 16,
+  "source_width": 100,
+  "source_height": 20,
+  "frames": 12,
+  "duration_ms": 1200,
+  "loop": 0,
+  "fill": "#000000",
+  "active": true
+}
+```
+
+Any subsequent framebuffer write (`/frame`, `/draw`, `/fill`, `/pixel`, `/clear`, another `/animate`) or `POST /demo?enabled=1` automatically stops the active GIF animation.
+
+**`400` errors:** empty body, invalid `?fill=` or `?loop=` value, corrupt/truncated GIF, or exceeding the decoder's safety caps (4096×4096 source dimensions, 4096 frames, or 32 MiB decoded frame buffer).
+
+### GET /animate
+
+**Methods:** `GET` · **Alias:** `/api/animate`
+
+Returns whether a GIF animation is currently playing, along with its dimensions, frame count, fill color, and current frame index.
+
+```json
+{"active":true,"width":72,"height":16,"source_width":100,"source_height":20,"frames":12,"current_frame":3,"duration_ms":1200,"loop":0,"fill":"#000000"}
+{"active":false}
+```
+
+### DELETE /animate
+
+**Methods:** `DELETE` · **Alias:** `/api/animate`
+
+Stops the active GIF animation while keeping the currently displayed frame on screen. Returns `{"ok":true,"active":false}`.
 
 ---
 

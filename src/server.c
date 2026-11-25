@@ -526,6 +526,8 @@ static const RouteMethods KNOWN_ROUTES[] = {
     {"/api/frame",  "GET, POST, PUT, DELETE, OPTIONS"},
     {"/frame.png",  "GET, POST, PUT, OPTIONS"},
     {"/frame.rgb",  "GET, POST, PUT, OPTIONS"},
+    {"/animate",     "GET, POST, PUT, DELETE, OPTIONS"},
+    {"/api/animate", "GET, POST, PUT, DELETE, OPTIONS"},
     {"/clear",      "POST, OPTIONS"},
     {"/fill",       "POST, OPTIONS"},
     {"/pixel",      "GET, POST, PUT, OPTIONS"},
@@ -639,6 +641,7 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
                  "\"brightness\":%u,"
                  "\"monochrome\":%s,"
                  "\"demo_active\":%s,"
+                 "\"animation_active\":%s,"
                  "\"frames_received\":%llu,"
                  "\"audio_ready\":%s,"
                  "\"alert_sounds\":%d}",
@@ -647,6 +650,7 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
                  (unsigned)display_get_brightness(disp),
                  mono_json,
                  display_is_demo_active(disp) ? "true" : "false",
+                 display_is_gif_active(disp) ? "true" : "false",
                  (unsigned long long)display_get_frames_received(disp),
                  audio_is_ready(srv->audio) ? "true" : "false",
                  MARKEE_ALERT_COUNT);
@@ -745,6 +749,98 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
                  "{\"error\":\"expected %dx%d PNG or %zu raw RGB bytes, got %zu bytes\"}",
                  disp->width, disp->height, disp->frame_bytes, req->body_len);
         send_json(fd, 400, "Bad Request", err, ka);
+        return;
+    }
+
+    /* GET /animate or /api/animate */
+    if (strcmp(req->method, "GET") == 0 &&
+        (strcmp(req->path, "/animate") == 0 || strcmp(req->path, "/api/animate") == 0)) {
+        MarkeeGifStatus st;
+        if (display_get_gif_status(disp, &st)) {
+            char json[320];
+            snprintf(json, sizeof(json),
+                     "{\"active\":true,\"width\":%d,\"height\":%d,"
+                     "\"source_width\":%d,\"source_height\":%d,"
+                     "\"frames\":%zu,\"current_frame\":%zu,"
+                     "\"duration_ms\":%llu,\"loop\":%d,"
+                     "\"fill\":\"#%02x%02x%02x\"}",
+                     disp->width, disp->height,
+                     st.src_width, st.src_height,
+                     st.frame_count, st.current_frame,
+                     (unsigned long long)st.total_duration_ms,
+                     st.loop_count,
+                     st.fill_r, st.fill_g, st.fill_b);
+            send_json(fd, 200, "OK", json, ka);
+        } else {
+            send_json(fd, 200, "OK", "{\"active\":false}", ka);
+        }
+        return;
+    }
+
+    /* DELETE /animate or /api/animate */
+    if (strcmp(req->method, "DELETE") == 0 &&
+        (strcmp(req->path, "/animate") == 0 || strcmp(req->path, "/api/animate") == 0)) {
+        display_stop_gif(disp);
+        send_json(fd, 200, "OK", "{\"ok\":true,\"active\":false}", ka);
+        return;
+    }
+
+    /* POST or PUT /animate or /api/animate: animated or static GIF payload */
+    if ((strcmp(req->method, "POST") == 0 || strcmp(req->method, "PUT") == 0) &&
+        (strcmp(req->path, "/animate") == 0 || strcmp(req->path, "/api/animate") == 0)) {
+        if (!req->body || req->body_len == 0) {
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"empty body; send a GIF image payload\"}", ka);
+            return;
+        }
+
+        int loop_override = -1;
+        char loop_val[32];
+        if (query_get(req->query, "loop", loop_val, sizeof(loop_val))) {
+            int lv = -1;
+            if (!parse_int_param(loop_val, &lv) || lv < 0) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"loop must be a non-negative integer (0 = infinite)\"}",
+                          ka);
+                return;
+            }
+            loop_override = lv;
+        }
+
+        uint8_t fill_r = 0, fill_g = 0, fill_b = 0;
+        char fill_val[64];
+        if (query_get(req->query, "fill", fill_val, sizeof(fill_val))) {
+            if (!parse_color_rgb(fill_val, &fill_r, &fill_g, &fill_b)) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"invalid fill color (expected RRGGBB, 0xRRGGBB, RGB, or color name)\"}",
+                          ka);
+                return;
+            }
+        }
+
+        MarkeeGifStatus st;
+        char err[256] = {0};
+        if (display_load_gif(disp, req->body, req->body_len, loop_override,
+                             fill_r, fill_g, fill_b,
+                             &st, err, sizeof(err)) != MARKEE_OK) {
+            send_error(fd, 400, "Bad Request", err[0] ? err : "invalid GIF data", ka);
+            return;
+        }
+
+        char json[320];
+        snprintf(json, sizeof(json),
+                 "{\"ok\":true,\"format\":\"gif\",\"width\":%d,\"height\":%d,"
+                 "\"source_width\":%d,\"source_height\":%d,"
+                 "\"frames\":%zu,\"duration_ms\":%llu,\"loop\":%d,"
+                 "\"fill\":\"#%02x%02x%02x\",\"active\":%s}",
+                 disp->width, disp->height,
+                 st.src_width, st.src_height,
+                 st.frame_count,
+                 (unsigned long long)st.total_duration_ms,
+                 st.loop_count,
+                 st.fill_r, st.fill_g, st.fill_b,
+                 st.active ? "true" : "false");
+        send_json(fd, 200, "OK", json, ka);
         return;
     }
 

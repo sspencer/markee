@@ -17,6 +17,7 @@
 #include "config.h"
 #include "display.h"
 #include "draw.h"
+#include "gif.h"
 #include "json.h"
 #include "raylib.h"
 #include "renderer.h"
@@ -1034,6 +1035,746 @@ static void test_alert_http_api(void) {
     printf("[PASS] /alert HTTP API (GET list, POST /alert/<id|name>, query/JSON/text, volume, 400/404/405)\n");
 }
 
+/* --- Minimal GIF89a test builder (emits valid LZW streams with Clear codes) --- */
+
+typedef struct {
+    uint8_t *buf;
+    size_t len;
+    size_t cap;
+} ByteBuf;
+
+static void bb_push(ByteBuf *b, uint8_t v) {
+    if (b->len == b->cap) {
+        size_t ncap = b->cap ? b->cap * 2 : 256;
+        b->buf = realloc(b->buf, ncap);
+        assert(b->buf != NULL);
+        b->cap = ncap;
+    }
+    b->buf[b->len++] = v;
+}
+
+static void bb_push_bytes(ByteBuf *b, const void *src, size_t n) {
+    const uint8_t *p = (const uint8_t *)src;
+    for (size_t i = 0; i < n; i++) bb_push(b, p[i]);
+}
+
+static void bb_push_u16(ByteBuf *b, uint16_t v) {
+    bb_push(b, (uint8_t)(v & 0xFF));
+    bb_push(b, (uint8_t)((v >> 8) & 0xFF));
+}
+
+typedef struct {
+    ByteBuf *out;
+    uint8_t sub[255];
+    size_t sub_len;
+    uint32_t bit_buf;
+    int bit_count;
+} GifBitWriter;
+
+static void bw_flush_sub(GifBitWriter *w) {
+    if (w->sub_len > 0) {
+        bb_push(w->out, (uint8_t)w->sub_len);
+        bb_push_bytes(w->out, w->sub, w->sub_len);
+        w->sub_len = 0;
+    }
+}
+
+static void bw_write_code(GifBitWriter *w, int code, int bits) {
+    w->bit_buf |= ((uint32_t)code << w->bit_count);
+    w->bit_count += bits;
+    while (w->bit_count >= 8) {
+        w->sub[w->sub_len++] = (uint8_t)(w->bit_buf & 0xFF);
+        w->bit_buf >>= 8;
+        w->bit_count -= 8;
+        if (w->sub_len == 255) bw_flush_sub(w);
+    }
+}
+
+static void bw_finish(GifBitWriter *w) {
+    if (w->bit_count > 0) {
+        w->sub[w->sub_len++] = (uint8_t)(w->bit_buf & 0xFF);
+        w->bit_buf = 0;
+        w->bit_count = 0;
+    }
+    bw_flush_sub(w);
+    bb_push(w->out, 0x00); /* sub-block terminator */
+}
+
+static void gif_begin(ByteBuf *b, uint16_t w, uint16_t h,
+                      const uint8_t *gct, int gct_exp /* 0..7 => 2^(exp+1) colors; <0 = no GCT */) {
+    bb_push_bytes(b, "GIF89a", 6);
+    bb_push_u16(b, w);
+    bb_push_u16(b, h);
+    uint8_t packed = (gct_exp >= 0) ? (uint8_t)(0x80U | (gct_exp & 0x07)) : 0x00;
+    bb_push(b, packed);
+    bb_push(b, 0x00); /* bg index */
+    bb_push(b, 0x00); /* aspect */
+    if (gct_exp >= 0 && gct) {
+        size_t n = (size_t)1U << (gct_exp + 1);
+        bb_push_bytes(b, gct, n * 3);
+    }
+}
+
+static void gif_add_netscape(ByteBuf *b, uint16_t iters) {
+    bb_push(b, 0x21);
+    bb_push(b, 0xFF);
+    bb_push(b, 11);
+    bb_push_bytes(b, "NETSCAPE2.0", 11);
+    bb_push(b, 3);
+    bb_push(b, 0x01);
+    bb_push_u16(b, iters);
+    bb_push(b, 0x00);
+}
+
+static void gif_add_frame(ByteBuf *b, uint16_t fx, uint16_t fy, uint16_t fw, uint16_t fh,
+                          uint16_t delay_cs, uint8_t disposal,
+                          bool has_trans, uint8_t trans_idx,
+                          bool interlaced,
+                          const uint8_t *lct, int lct_exp,
+                          const uint8_t *indices) {
+    /* Graphic Control Extension */
+    bb_push(b, 0x21);
+    bb_push(b, 0xF9);
+    bb_push(b, 4);
+    uint8_t gce_packed = (uint8_t)(((disposal & 0x07U) << 2) | (has_trans ? 1U : 0U));
+    bb_push(b, gce_packed);
+    bb_push_u16(b, delay_cs);
+    bb_push(b, trans_idx);
+    bb_push(b, 0x00);
+
+    /* Image Descriptor */
+    bb_push(b, 0x2C);
+    bb_push_u16(b, fx);
+    bb_push_u16(b, fy);
+    bb_push_u16(b, fw);
+    bb_push_u16(b, fh);
+    uint8_t img_packed = (interlaced ? 0x40U : 0x00U) |
+                         ((lct_exp >= 0) ? (uint8_t)(0x80U | (lct_exp & 0x07)) : 0x00U);
+    bb_push(b, img_packed);
+    if (lct_exp >= 0 && lct) {
+        size_t n = (size_t)1U << (lct_exp + 1);
+        bb_push_bytes(b, lct, n * 3);
+    }
+
+    /* Uncompressed-style valid LZW stream (min_code_size = 8, clear every 200 pixels so code
+     * size stays 9 bits while exercising real LZW table additions + clear resets). */
+    const uint8_t min_cs = 8;
+    const int clear_code = 256;
+    const int eoi_code = 257;
+    bb_push(b, min_cs);
+
+    GifBitWriter bw;
+    memset(&bw, 0, sizeof(bw));
+    bw.out = b;
+    bw_write_code(&bw, clear_code, 9);
+    int emitted_since_clear = 0;
+    size_t count = (size_t)fw * (size_t)fh;
+    for (size_t i = 0; i < count; i++) {
+        bw_write_code(&bw, indices[i], 9);
+        emitted_since_clear++;
+        if (emitted_since_clear >= 200) {
+            bw_write_code(&bw, clear_code, 9);
+            emitted_since_clear = 0;
+        }
+    }
+    bw_write_code(&bw, eoi_code, 9);
+    bw_finish(&bw);
+}
+
+static void gif_end(ByteBuf *b) {
+    bb_push(b, 0x3B);
+}
+
+static void test_gif_decoder_crop_center_and_features(void) {
+    /* 1. Too small (10x6) on 72x16 -> centered at x=31..40, y=5..10, black margins */
+    {
+        uint8_t gct[4 * 3] = {
+            0, 0, 0,       /* 0: black */
+            255, 0, 0,     /* 1: red */
+            0, 255, 0,     /* 2: green */
+            0, 0, 255      /* 3: blue */
+        };
+        uint8_t px[10 * 6];
+        memset(px, 1, sizeof(px));
+        px[0] = 2;              /* top-left of GIF = green */
+        px[5 * 10 + 9] = 3;     /* bottom-right of GIF = blue */
+
+        ByteBuf bb = {0};
+        gif_begin(&bb, 10, 6, gct, 1);
+        gif_add_frame(&bb, 0, 0, 10, 6, 5, 0, false, 0, false, NULL, -1, px);
+        gif_end(&bb);
+
+        MarkeeGif *gif = NULL;
+        char err[128] = {0};
+        assert(gif_decode(bb.buf, bb.len, 72, 16, &gif, err, sizeof(err)));
+        assert(gif != NULL);
+        assert(gif->src_width == 10 && gif->src_height == 6);
+        assert(gif->width == 72 && gif->height == 16);
+        assert(gif->frame_count == 1);
+        assert(gif->delays_ms[0] == 50);
+
+        /* Outside centered box -> black */
+        const uint8_t *f0 = gif->frames;
+        assert(f0[(0 * 72 + 0) * 3 + 0] == 0 && f0[(0 * 72 + 0) * 3 + 1] == 0);
+        assert(f0[(5 * 72 + 30) * 3 + 0] == 0 && f0[(5 * 72 + 30) * 3 + 1] == 0);
+        assert(f0[(4 * 72 + 31) * 3 + 0] == 0 && f0[(4 * 72 + 31) * 3 + 1] == 0);
+
+        /* Top-left of GIF at (31, 5) -> green */
+        assert(f0[(5 * 72 + 31) * 3 + 0] == 0 &&
+               f0[(5 * 72 + 31) * 3 + 1] == 255 &&
+               f0[(5 * 72 + 31) * 3 + 2] == 0);
+        /* Interior at (35, 7) -> red */
+        assert(f0[(7 * 72 + 35) * 3 + 0] == 255 &&
+               f0[(7 * 72 + 35) * 3 + 1] == 0 &&
+               f0[(7 * 72 + 35) * 3 + 2] == 0);
+        /* Bottom-right of GIF at (40, 10) -> blue */
+        assert(f0[(10 * 72 + 40) * 3 + 0] == 0 &&
+               f0[(10 * 72 + 40) * 3 + 1] == 0 &&
+               f0[(10 * 72 + 40) * 3 + 2] == 255);
+        /* Just past bottom-right at (41, 10) -> black */
+        assert(f0[(10 * 72 + 41) * 3 + 2] == 0);
+
+        gif_free(gif);
+        free(bb.buf);
+    }
+
+    /* 2. Too big (100x24) on 72x16 -> center-cropped (src_x0=14, src_y0=4) */
+    {
+        uint8_t gct[256 * 3];
+        memset(gct, 0, sizeof(gct));
+        for (int i = 0; i < 256; i++) {
+            gct[i * 3 + 0] = (uint8_t)i;
+            gct[i * 3 + 1] = (uint8_t)(255 - i);
+            gct[i * 3 + 2] = (uint8_t)((i * 3) & 0xFF);
+        }
+        uint8_t px[100 * 24];
+        for (int y = 0; y < 24; y++) {
+            for (int x = 0; x < 100; x++) {
+                px[y * 100 + x] = (uint8_t)((x + y * 5) & 0xFF);
+            }
+        }
+        ByteBuf bb = {0};
+        gif_begin(&bb, 100, 24, gct, 7);
+        gif_add_frame(&bb, 0, 0, 100, 24, 4, 0, false, 0, false, NULL, -1, px);
+        gif_end(&bb);
+
+        MarkeeGif *gif = NULL;
+        assert(gif_decode(bb.buf, bb.len, 72, 16, &gif, NULL, 0));
+        assert(gif->src_width == 100 && gif->src_height == 24);
+        /* Display (0,0) == source (14,4) */
+        uint8_t idx00 = px[4 * 100 + 14];
+        assert(gif->frames[0] == gct[idx00 * 3 + 0] &&
+               gif->frames[1] == gct[idx00 * 3 + 1] &&
+               gif->frames[2] == gct[idx00 * 3 + 2]);
+        /* Display (71,15) == source (85,19) */
+        uint8_t idx11 = px[19 * 100 + 85];
+        size_t off11 = (15 * 72 + 71) * 3;
+        assert(gif->frames[off11 + 0] == gct[idx11 * 3 + 0] &&
+               gif->frames[off11 + 1] == gct[idx11 * 3 + 1] &&
+               gif->frames[off11 + 2] == gct[idx11 * 3 + 2]);
+
+        gif_free(gif);
+        free(bb.buf);
+    }
+
+    /* 3. Mixed axis (100x8 on 72x16): center-cropped X (src_x0=14), centered Y (dst_y0=4) */
+    {
+        uint8_t gct[4 * 3] = {0, 0, 0,  255, 191, 0,  0, 200, 255,  255, 255, 255};
+        uint8_t px[100 * 8];
+        memset(px, 1, sizeof(px));
+        px[0 * 100 + 14] = 2; /* visible top-left after X crop */
+
+        ByteBuf bb = {0};
+        gif_begin(&bb, 100, 8, gct, 1);
+        gif_add_frame(&bb, 0, 0, 100, 8, 10, 0, false, 0, false, NULL, -1, px);
+        gif_end(&bb);
+
+        MarkeeGif *gif = NULL;
+        assert(gif_decode(bb.buf, bb.len, 72, 16, &gif, NULL, 0));
+        /* Rows 0..3 and 12..15 are black */
+        assert(gif->frames[(3 * 72 + 0) * 3 + 0] == 0);
+        assert(gif->frames[(12 * 72 + 0) * 3 + 0] == 0);
+        /* (0, 4) matches source (14, 0) -> cyan (0, 200, 255) */
+        assert(gif->frames[(4 * 72 + 0) * 3 + 0] == 0 &&
+               gif->frames[(4 * 72 + 0) * 3 + 1] == 200 &&
+               gif->frames[(4 * 72 + 0) * 3 + 2] == 255);
+        /* (1, 4) -> amber (255, 191, 0) */
+        assert(gif->frames[(4 * 72 + 1) * 3 + 0] == 255 &&
+               gif->frames[(4 * 72 + 1) * 3 + 1] == 191 &&
+               gif->frames[(4 * 72 + 1) * 3 + 2] == 0);
+
+        gif_free(gif);
+        free(bb.buf);
+    }
+
+    /* 4. Per-frame Local Color Table, transparency, disposal 1/2/3, interlacing, delay clamping */
+    {
+        uint8_t gct[4 * 3] = {
+            0, 0, 0,        /* 0: black */
+            200, 0, 0,      /* 1: red */
+            0, 200, 0,      /* 2: green */
+            0, 0, 200       /* 3: blue */
+        };
+        uint8_t lct[4 * 3] = {
+            0, 0, 0,        /* 0: transparent */
+            255, 255, 0,    /* 1: yellow (different from GCT!) */
+            255, 0, 255,    /* 2: magenta */
+            0, 255, 255     /* 3: cyan */
+        };
+
+        /* 8x8 GIF on 8x8 display, 4 frames:
+         * Frame 0: full 8x8 red (interlaced!), disposal=1 (leave), delay=4 cs (40 ms)
+         * Frame 1: 4x4 sub-rect at (2,2) with LCT yellow & index 0 transparent, disposal=3 (restore prev), delay=0 cs -> clamped 100 ms
+         * Frame 2: 2x2 sub-rect at (0,0) green (GCT), disposal=2 (restore bg), delay=6 cs (60 ms)
+         * Frame 3: 1x1 sub-rect at (7,7) blue (GCT), disposal=0, delay=1 cs -> clamped 100 ms */
+        uint8_t f0_px[64];
+        memset(f0_px, 1, sizeof(f0_px));
+        /* Interlaced pass 0 starts at row 0, pass 3 has row 1 -> put index 3 at pass-0 row 0, col 0 */
+        f0_px[0] = 3; /* row 0, col 0 => blue */
+
+        uint8_t f1_px[16];
+        memset(f1_px, 1, sizeof(f1_px)); /* yellow in LCT */
+        f1_px[0] = 0;                    /* transparent at (2,2) => red shows through! */
+
+        uint8_t f2_px[4] = {2, 2, 2, 2}; /* green at (0..1, 0..1) */
+        uint8_t f3_px[1] = {3};          /* blue at (7,7) */
+
+        ByteBuf bb = {0};
+        gif_begin(&bb, 8, 8, gct, 1);
+        gif_add_netscape(&bb, 0); /* infinite loop */
+        gif_add_frame(&bb, 0, 0, 8, 8, 4, 1, false, 0, true, NULL, -1, f0_px);
+        gif_add_frame(&bb, 2, 2, 4, 4, 0, 3, true, 0, false, lct, 1, f1_px);
+        gif_add_frame(&bb, 0, 0, 2, 2, 6, 2, false, 0, false, NULL, -1, f2_px);
+        gif_add_frame(&bb, 7, 7, 1, 1, 1, 0, false, 0, false, NULL, -1, f3_px);
+        gif_end(&bb);
+
+        MarkeeGif *gif = NULL;
+        assert(gif_decode(bb.buf, bb.len, 8, 8, &gif, NULL, 0));
+        assert(gif->frame_count == 4);
+        assert(gif->loop_count == 0);
+        assert(gif->delays_ms[0] == 40);
+        assert(gif->delays_ms[1] == 100); /* 0 cs clamped to 100 ms */
+        assert(gif->delays_ms[2] == 60);
+        assert(gif->delays_ms[3] == 100); /* 1 cs clamped to 100 ms */
+        assert(gif->total_duration_ms == 300);
+
+        size_t fb = gif->frame_bytes;
+        const uint8_t *fr0 = gif->frames + 0 * fb;
+        const uint8_t *fr1 = gif->frames + 1 * fb;
+        const uint8_t *fr2 = gif->frames + 2 * fb;
+        const uint8_t *fr3 = gif->frames + 3 * fb;
+
+        /* Frame 0: (0,0) blue, (3,3) red */
+        assert(fr0[0] == 0 && fr0[1] == 0 && fr0[2] == 200);
+        assert(fr0[(3 * 8 + 3) * 3 + 0] == 200 && fr0[(3 * 8 + 3) * 3 + 1] == 0);
+
+        /* Frame 1: (2,2) transparent -> stays red; (3,3) LCT yellow (255,255,0) */
+        assert(fr1[(2 * 8 + 2) * 3 + 0] == 200 && fr1[(2 * 8 + 2) * 3 + 1] == 0);
+        assert(fr1[(3 * 8 + 3) * 3 + 0] == 255 &&
+               fr1[(3 * 8 + 3) * 3 + 1] == 255 &&
+               fr1[(3 * 8 + 3) * 3 + 2] == 0);
+
+        /* Frame 2: disposal=3 from Frame 1 restored (3,3) back to red! And (0,0) is green */
+        assert(fr2[(3 * 8 + 3) * 3 + 0] == 200 && fr2[(3 * 8 + 3) * 3 + 1] == 0);
+        assert(fr2[0] == 0 && fr2[1] == 200 && fr2[2] == 0);
+
+        /* Frame 3: disposal=2 from Frame 2 cleared (0,0) to black! And (7,7) is blue */
+        assert(fr3[0] == 0 && fr3[1] == 0 && fr3[2] == 0);
+        assert(fr3[(7 * 8 + 7) * 3 + 0] == 0 &&
+               fr3[(7 * 8 + 7) * 3 + 1] == 0 &&
+               fr3[(7 * 8 + 7) * 3 + 2] == 200);
+
+        gif_free(gif);
+        free(bb.buf);
+    }
+
+    printf("[PASS] GIF89a decoder (crop, center, mixed axis, LCT, transparency, disposal 1/2/3, interlacing)\n");
+}
+
+static void test_animate_http_api(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, true));
+    MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+    uint8_t pr, pg, pb;
+
+    /* Build a 3-frame 12x8 animated GIF:
+     * Frame 0: red (50 ms), Frame 1: green (60 ms), Frame 2: blue (70 ms), infinite loop.
+     * Centered on 72x16 => x=30..41, y=4..11. */
+    uint8_t gct[4 * 3] = {0, 0, 0,  255, 0, 0,  0, 255, 0,  0, 0, 255};
+    uint8_t p_red[12 * 8], p_grn[12 * 8], p_blu[12 * 8];
+    memset(p_red, 1, sizeof(p_red));
+    memset(p_grn, 2, sizeof(p_grn));
+    memset(p_blu, 3, sizeof(p_blu));
+
+    ByteBuf anim = {0};
+    gif_begin(&anim, 12, 8, gct, 1);
+    gif_add_netscape(&anim, 0);
+    gif_add_frame(&anim, 0, 0, 12, 8, 5, 0, false, 0, false, NULL, -1, p_red);
+    gif_add_frame(&anim, 0, 0, 12, 8, 6, 0, false, 0, false, NULL, -1, p_grn);
+    gif_add_frame(&anim, 0, 0, 12, 8, 7, 0, false, 0, false, NULL, -1, p_blu);
+    gif_end(&anim);
+
+    /* 1. GET /animate before upload -> active:false */
+    HttpResp r = do_request(port, "GET", "/animate", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"active\":false") != NULL);
+    free(r.body);
+
+    /* 2. POST /animate -> uploads, stops demo, immediately displays centered frame 0 (red) */
+    r = do_request(port, "POST", "/animate", "image/gif", anim.buf, anim.len);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"format\":\"gif\"") != NULL);
+    assert(strstr((char *)r.body, "\"source_width\":12") != NULL);
+    assert(strstr((char *)r.body, "\"source_height\":8") != NULL);
+    assert(strstr((char *)r.body, "\"frames\":3") != NULL);
+    assert(strstr((char *)r.body, "\"duration_ms\":180") != NULL);
+    assert(strstr((char *)r.body, "\"loop\":0") != NULL);
+    assert(strstr((char *)r.body, "\"active\":true") != NULL);
+    free(r.body);
+
+    assert(!display_is_demo_active(&disp));
+    assert(display_is_gif_active(&disp));
+
+    /* Check GET /info reports animation_active:true */
+    r = do_request(port, "GET", "/info", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"animation_active\":true") != NULL);
+    free(r.body);
+
+    /* Centered box (30,4) is red; margin (0,0) is black */
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 0);
+    assert(display_get_pixel(&disp, 30, 4, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 0 && pb == 0);
+
+    /* 3. Advance time via display_tick: 0.0 -> anchor, +55 ms -> frame 1 (green), +60 ms -> frame 2 (blue), +70 ms -> wraps to frame 0 (red) */
+    display_tick(&disp, 1.000);
+    assert(display_get_pixel(&disp, 30, 4, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 0 && pb == 0);
+
+    display_tick(&disp, 1.055); /* +55 ms >= 50 ms => frame 1 (green) */
+    assert(display_get_pixel(&disp, 30, 4, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 255 && pb == 0);
+
+    r = do_request(port, "GET", "/animate", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"active\":true") != NULL);
+    assert(strstr((char *)r.body, "\"current_frame\":1") != NULL);
+    free(r.body);
+
+    display_tick(&disp, 1.115); /* +60 ms (accum 65 >= 60) => frame 2 (blue) */
+    assert(display_get_pixel(&disp, 30, 4, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 255);
+
+    display_tick(&disp, 1.185); /* +70 ms (accum 75 >= 70) => wraps to frame 0 (red) */
+    assert(display_get_pixel(&disp, 30, 4, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 0 && pb == 0);
+
+    /* 4. DELETE /animate stops playback while keeping current frame on screen */
+    r = do_request(port, "DELETE", "/animate", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"active\":false") != NULL);
+    free(r.body);
+    assert(!display_is_gif_active(&disp));
+    assert(display_get_pixel(&disp, 30, 4, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 0 && pb == 0);
+
+    /* 5. Finite loop override (?loop=1) plays once and stops on the last frame (blue) */
+    r = do_request(port, "POST", "/animate?loop=1", "image/gif", anim.buf, anim.len);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"loop\":1") != NULL);
+    free(r.body);
+
+    display_tick(&disp, 2.000);
+    display_tick(&disp, 2.500); /* > 180 ms total -> finishes loop 1, stops on frame 2 (blue) */
+    assert(!display_is_gif_active(&disp));
+    assert(display_get_pixel(&disp, 30, 4, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 255);
+
+    /* 6. fill=<color> composites transparent GIF pixels and centered margins over the fill color */
+    {
+        uint8_t px_t[12 * 8];
+        memset(px_t, 0, sizeof(px_t)); /* index 0 = transparent */
+        px_t[0] = 1;                   /* (0,0) of GIF = opaque red -> centered at (30,4) */
+
+        ByteBuf tgif = {0};
+        gif_begin(&tgif, 12, 8, gct, 1);
+        gif_add_netscape(&tgif, 0);
+        gif_add_frame(&tgif, 0, 0, 12, 8, 5, 2, true, 0, false, NULL, -1, px_t);
+        gif_add_frame(&tgif, 0, 0, 12, 8, 5, 2, true, 0, false, NULL, -1, px_t);
+        gif_end(&tgif);
+
+        r = do_request(port, "POST", "/animate?fill=white", "image/gif", tgif.buf, tgif.len);
+        assert(r.status == 200);
+        assert(strstr((char *)r.body, "\"fill\":\"#ffffff\"") != NULL);
+        free(r.body);
+
+        r = do_request(port, "GET", "/animate", NULL, NULL, 0);
+        assert(r.status == 200);
+        assert(strstr((char *)r.body, "\"fill\":\"#ffffff\"") != NULL);
+        free(r.body);
+
+        /* Centered margin (0,0) and transparent GIF pixel (31,4) -> white; opaque (30,4) -> red */
+        assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 255 && pb == 255);
+        assert(display_get_pixel(&disp, 31, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 255 && pb == 255);
+        assert(display_get_pixel(&disp, 30, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 0 && pb == 0);
+
+        /* Hex fill color (0x102030) works too */
+        r = do_request(port, "POST", "/animate?fill=0x102030&loop=1", "image/gif", tgif.buf, tgif.len);
+        assert(r.status == 200);
+        assert(strstr((char *)r.body, "\"fill\":\"#102030\"") != NULL);
+        free(r.body);
+        assert(display_get_pixel(&disp, 31, 4, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0x10 && pg == 0x20 && pb == 0x30);
+
+        /* Invalid fill color -> 400 */
+        r = do_request(port, "POST", "/animate?fill=notacolor", "image/gif", tgif.buf, tgif.len);
+        assert(r.status == 400);
+        free(r.body);
+
+        free(tgif.buf);
+    }
+
+    /* 7. Other framebuffer writes (/draw, /clear) automatically stop an active animation */
+    r = do_request(port, "POST", "/animate", "image/gif", anim.buf, anim.len);
+    assert(r.status == 200);
+    free(r.body);
+    assert(display_is_gif_active(&disp));
+
+    const char *draw_px = "[{\"op\":\"pixel\",\"x\":0,\"y\":0,\"color\":\"white\"}]";
+    r = do_request(port, "POST", "/draw", "application/json", draw_px, strlen(draw_px));
+    assert(r.status == 200);
+    free(r.body);
+    assert(!display_is_gif_active(&disp));
+
+    /* 7. Error handling: empty body, non-GIF, truncated GIF, bad loop param, 405 */
+    r = do_request(port, "POST", "/animate", "image/gif", NULL, 0);
+    assert(r.status == 400);
+    free(r.body);
+
+    const char *not_gif = "not a gif file";
+    r = do_request(port, "POST", "/animate", "image/gif", not_gif, strlen(not_gif));
+    assert(r.status == 400);
+    free(r.body);
+
+    r = do_request(port, "POST", "/animate", "image/gif", anim.buf, 20); /* truncated */
+    assert(r.status == 400);
+    free(r.body);
+
+    r = do_request(port, "POST", "/animate?loop=-1", "image/gif", anim.buf, anim.len);
+    assert(r.status == 400);
+    free(r.body);
+
+    const char *patch_req = "PATCH /animate HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+    char *raw = raw_exchange(port, patch_req, strlen(patch_req));
+    assert(strncmp(raw, "HTTP/1.1 405", 12) == 0);
+    assert(strstr(raw, "\r\nAllow: GET, POST, PUT, DELETE, OPTIONS\r\n") != NULL);
+    free(raw);
+
+    free(anim.buf);
+    server_stop(srv);
+    display_destroy(&disp);
+    printf("[PASS] /animate HTTP API (POST/GET/DELETE, timing, looping, stop-on-write, 400/405)\n");
+}
+
+static char *encode_base64(const uint8_t *in, size_t len) {
+    static const char T[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t out_len = ((len + 2) / 3) * 4;
+    char *out = malloc(out_len + 1);
+    assert(out != NULL);
+    size_t o = 0;
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t v = ((uint32_t)in[i] << 16);
+        if (i + 1 < len) v |= ((uint32_t)in[i + 1] << 8);
+        if (i + 2 < len) v |= (uint32_t)in[i + 2];
+        out[o++] = T[(v >> 18) & 0x3F];
+        out[o++] = T[(v >> 12) & 0x3F];
+        out[o++] = (i + 1 < len) ? T[(v >> 6) & 0x3F] : '=';
+        out[o++] = (i + 2 < len) ? T[v & 0x3F] : '=';
+    }
+    out[o] = '\0';
+    return out;
+}
+
+static void test_draw_gif_op(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, false));
+    MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+    uint8_t pr, pg, pb;
+
+    /* 6x6 transparent 2-frame sprite:
+     * index 0 = transparent; (0,0) and (5,5) are opaque:
+     * Frame 0: red (50 ms), Frame 1: green (60 ms), disposal=2 */
+    uint8_t gct[4 * 3] = {0, 0, 0,  255, 0, 0,  0, 255, 0,  0, 0, 255};
+    uint8_t f0[6 * 6], f1[6 * 6];
+    memset(f0, 0, sizeof(f0));
+    memset(f1, 0, sizeof(f1));
+    f0[0] = 1; f0[5 * 6 + 5] = 1; /* red */
+    f1[0] = 2; f1[5 * 6 + 5] = 2; /* green */
+
+    ByteBuf sprite = {0};
+    gif_begin(&sprite, 6, 6, gct, 1);
+    gif_add_netscape(&sprite, 0);
+    gif_add_frame(&sprite, 0, 0, 6, 6, 5, 2, true, 0, false, NULL, -1, f0);
+    gif_add_frame(&sprite, 0, 0, 6, 6, 6, 2, true, 0, false, NULL, -1, f1);
+    gif_end(&sprite);
+
+    char *b64 = encode_base64(sprite.buf, sprite.len);
+
+    /* 1. Placed GIF without fill over #002040 background + sibling static pixel */
+    {
+        char *body = malloc(strlen(b64) + 512);
+        assert(body != NULL);
+        sprintf(body,
+                "["
+                "{\"op\":\"clear\",\"color\":\"#002040\"},"
+                "{\"op\":\"gif\",\"x\":4,\"y\":2,\"data\":\"data:image/gif;base64,%s\",\"loop\":0},"
+                "{\"op\":\"pixel\",\"x\":30,\"y\":8,\"color\":\"amber\"}"
+                "]",
+                b64);
+        HttpResp r = do_request(port, "POST", "/draw", "application/json", body, strlen(body));
+        free(body);
+        assert(r.status == 200);
+        assert(strstr((char *)r.body, "\"ops\":3") != NULL);
+        free(r.body);
+
+        assert(display_is_gif_active(&disp));
+
+        /* Frame 0 immediately visible: opaque (4,2) = red, transparent (5,2) = #002040, sibling (30,8) = amber */
+        assert(display_get_pixel(&disp, 4, 2, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 0 && pb == 0);
+        assert(display_get_pixel(&disp, 5, 2, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0x00 && pg == 0x20 && pb == 0x40);
+        assert(display_get_pixel(&disp, 30, 8, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 191 && pb == 0);
+
+        /* Tick forward 55 ms -> frame 1 (green), transparent pixel & sibling pixel preserved */
+        display_tick(&disp, 1.000);
+        display_tick(&disp, 1.055);
+        assert(display_get_pixel(&disp, 4, 2, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 255 && pb == 0);
+        assert(display_get_pixel(&disp, 5, 2, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0x00 && pg == 0x20 && pb == 0x40);
+        assert(display_get_pixel(&disp, 30, 8, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 191 && pb == 0);
+    }
+
+    /* 2. Placed GIF with fill="white" and loop=1 + negative x clipping */
+    {
+        char *body = malloc(strlen(b64) + 512);
+        assert(body != NULL);
+        sprintf(body,
+                "["
+                "{\"op\":\"clear\",\"color\":\"#001020\"},"
+                "{\"op\":\"gif\",\"x\":-2,\"y\":3,\"data\":\"%s\",\"loop\":1,\"fill\":\"white\"}"
+                "]",
+                b64);
+        HttpResp r = do_request(port, "POST", "/draw", "application/json", body, strlen(body));
+        free(body);
+        assert(r.status == 200);
+        free(r.body);
+
+        /* x=-2..3, y=3..8 -> visible x=0..3, y=3..8:
+         * source (2,0) -> (0,3) is transparent => white fill!
+         * source (5,5) -> (3,8) is opaque => red (frame 0)!
+         * outside rect (4,3) => #001020! */
+        assert(display_get_pixel(&disp, 0, 3, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 255 && pb == 255);
+        assert(display_get_pixel(&disp, 3, 8, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 0 && pb == 0);
+        assert(display_get_pixel(&disp, 4, 3, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0x00 && pg == 0x10 && pb == 0x20);
+
+        /* Finish single loop (> 110 ms) -> stops on frame 1 (green at (3,8), white at (0,3)) */
+        display_tick(&disp, 2.000);
+        display_tick(&disp, 2.300);
+        assert(!display_is_gif_active(&disp));
+        assert(display_get_pixel(&disp, 3, 8, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 255 && pb == 0);
+        assert(display_get_pixel(&disp, 0, 3, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 255 && pb == 255);
+    }
+
+    /* 3. Two simultaneous GIFs with different loop counts + scrolling text */
+    {
+        char *body = malloc(strlen(b64) * 2 + 512);
+        assert(body != NULL);
+        sprintf(body,
+                "["
+                "{\"op\":\"clear\"},"
+                "{\"op\":\"gif\",\"x\":2,\"y\":5,\"data\":\"%s\",\"loop\":1,\"fill\":[10,20,30]},"
+                "{\"op\":\"gif\",\"x\":60,\"y\":5,\"data\":\"%s\",\"loop\":0},"
+                "{\"op\":\"text\",\"x\":20,\"y\":0,\"text\":\"HI\",\"color\":\"white\",\"scroll\":true,\"speed\":20}"
+                "]",
+                b64, b64);
+        HttpResp r = do_request(port, "POST", "/draw", "application/json", body, strlen(body));
+        free(body);
+        assert(r.status == 200);
+        free(r.body);
+
+        display_tick(&disp, 3.000);
+        /* Advance 130 ms: left GIF finishes loop 1 (holds green), right GIF wraps to frame 0 (red) */
+        display_tick(&disp, 3.130);
+        assert(display_is_gif_active(&disp));
+        assert(display_get_pixel(&disp, 2, 5, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 0 && pg == 255 && pb == 0); /* left GIF holds final frame (green) */
+        assert(display_get_pixel(&disp, 3, 5, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 10 && pg == 20 && pb == 30); /* left GIF [10,20,30] fill */
+        assert(display_get_pixel(&disp, 60, 5, &pr, &pg, &pb) == MARKEE_OK);
+        assert(pr == 255 && pg == 0 && pb == 0); /* right GIF wrapped back to frame 0 (red) */
+    }
+
+    /* 4. Validation errors and atomic rollback */
+    {
+        HttpResp r = do_request(port, "POST", "/draw", "application/json",
+                                "[{\"op\":\"gif\"}]", strlen("[{\"op\":\"gif\"}]"));
+        assert(r.status == 400);
+        free(r.body);
+
+        r = do_request(port, "POST", "/draw", "application/json",
+                       "[{\"op\":\"gif\",\"data\":\"!!!not-base64!!!\"}]",
+                       strlen("[{\"op\":\"gif\",\"data\":\"!!!not-base64!!!\"}]"));
+        assert(r.status == 400);
+        free(r.body);
+
+        char *bad_loop = malloc(strlen(b64) + 128);
+        sprintf(bad_loop, "[{\"op\":\"gif\",\"data\":\"%s\",\"loop\":-2}]", b64);
+        r = do_request(port, "POST", "/draw", "application/json", bad_loop, strlen(bad_loop));
+        assert(r.status == 400);
+        free(r.body);
+        free(bad_loop);
+
+        char *bad_fill = malloc(strlen(b64) + 128);
+        sprintf(bad_fill, "[{\"op\":\"gif\",\"data\":\"%s\",\"fill\":\"notacolor\"}]", b64);
+        r = do_request(port, "POST", "/draw", "application/json", bad_fill, strlen(bad_fill));
+        assert(r.status == 400);
+        free(r.body);
+        free(bad_fill);
+
+        /* Atomic rollback: valid gif followed by unknown op leaves previous active GIF intact */
+        char *rollback = malloc(strlen(b64) + 128);
+        sprintf(rollback, "[{\"op\":\"clear\"},{\"op\":\"gif\",\"data\":\"%s\"},{\"op\":\"nope\"}]", b64);
+        r = do_request(port, "POST", "/draw", "application/json", rollback, strlen(rollback));
+        assert(r.status == 400);
+        free(r.body);
+        free(rollback);
+        assert(display_is_gif_active(&disp));
+    }
+
+    free(b64);
+    free(sprite.buf);
+    server_stop(srv);
+    display_destroy(&disp);
+    printf("[PASS] POST /draw 'gif' op (x/y placement, clipping, transparent/fill, loop, multi-GIF + scroll, atomic)\n");
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     SetTraceLogLevel(LOG_ERROR);
@@ -1048,6 +1789,9 @@ int main(void) {
     test_audit_fixes();
     test_alert_audio_synthesis();
     test_alert_http_api();
+    test_gif_decoder_crop_center_and_features();
+    test_animate_http_api();
+    test_draw_gif_op();
 
     printf("\nAll markee tests passed!\n");
     return 0;

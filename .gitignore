@@ -1,4 +1,5 @@
 build/
+.codegraph/
 markee
 test_api
 snapshot.png

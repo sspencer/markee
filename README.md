@@ -17,7 +17,7 @@ It is an independent hobby project, not a BUSY Bar emulator. Its HTTP API is int
 - **72×16 true-color LED matrix** — 24-bit RGB per pixel, customizable from `1×1` to `1024×1024` via `--resolution`
 - **True-to-size desk rendering** — reads monitor EDID dimensions to scale the matrix to ~6.35 inches wide (overridable with `--dpi` and `--zoom`), framed in a molded off-white PC/ABS shell, smoked polycarbonate faceplate, square or circular LED dies, and soft glow halos at **60 Hz**
 - **Simple HTTP/1.1 API (Keep-Alive + open CORS)** — works out of the box with `curl`, Python, browser `fetch()`, Node.js, Go, or raw sockets:
-  - **Atomic drawing (`POST /draw`):** batch `clear`, `pixel`, `line`, `rect` (with corner radius), `oval`, `polygon`, and bitmap `text` (3 built-in fonts + smooth 60 Hz marquee scrolling)
+  - **Atomic drawing (`POST /draw`):** batch `clear`, `pixel`, `line`, `rect` (with corner radius), `oval`, `polygon`, bitmap `text` (3 built-in fonts + smooth 60 Hz marquee scrolling), and placed animated `gif` sprites
   - **Frame I/O (`/frame`):** upload or read back lossless `W×H` PNGs, or stream raw 24-bit RGB (`3,456` bytes at 72×16) at 60 FPS
   - **Pixels & panel controls:** read/set individual pixels, solid fills, clear, GUI brightness (`0–100%`), and a non-destructive BT.709 monochrome phosphor tint filter
 - **Built-in gentle alert sounds (`/alert`)** — 3 procedurally synthesized, non-startling chimes (`ding`, `chime`, `bell`) with volume control and overlapping playback; zero external audio files required
@@ -140,9 +140,10 @@ Available when running in GUI mode:
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | [`/info`](docs/API.md#get-info) | Resolution, settings, audio readiness, frame counter |
-| `POST` `PUT` | [`/draw`](docs/API.md#post-draw) | Atomic JSON batch of `clear`, `pixel`, `line`, `rect`, `oval`, `polygon`, and `text` ops |
+| `POST` `PUT` | [`/draw`](docs/API.md#post-draw) | Atomic JSON batch of `clear`, `pixel`, `line`, `rect`, `oval`, `polygon`, `text`, and `gif` ops |
 | `GET` | [`/frame`](docs/API.md#get-frame) | Read displayed pixels as a PNG (`/frame.rgb` or `?format=raw` for raw RGB24) |
 | `POST` `PUT` | [`/frame`](docs/API.md#post-frame) | Replace the frame with a `W×H` PNG or `W×H×3` raw RGB24 bytes (`/frame.rgb`) |
+| `GET` `POST` `PUT` `DELETE` | [`/animate`](docs/API.md#animated-gifs) | Play, inspect, or stop an animated GIF (crop/center to fit; optional `?fill=<color>` and `?loop=<n>`) |
 | `POST` | [`/clear`](docs/API.md#delete-frame-post-clear) | Clear to black (also `DELETE /frame`) |
 | `POST` | [`/fill`](docs/API.md#post-fill) | Fill the entire display with one color |
 | `GET` `POST` `PUT` | [`/pixel`](docs/API.md#pixels) | Read or set a single pixel |

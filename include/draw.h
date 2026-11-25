@@ -27,7 +27,7 @@ void draw_render_text_buf(uint8_t *buf, int buf_w, int buf_h,
 /* Execute a /draw JSON payload against the display.
  * The JSON body must be a non-empty array of one or more draw operation objects:
  *   [ { "op": "rect", ... }, { "op": "text", ... } ]
- * Supported ops: line, rect, oval, polygon, text, pixel, clear.
+ * Supported ops: line, rect, oval, polygon, text, pixel, clear, gif.
  * Execution is atomic: if any op in the array is invalid, the display is unchanged.
  * On success, returns true and sets *out_ops_executed (if non-NULL).
  * On error, returns false and writes a human-readable message into err_buf. */

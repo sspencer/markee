@@ -3,6 +3,7 @@
 #include "display.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -70,6 +71,26 @@ static void stop_scroll_unlocked(MarkeeDisplay *disp) {
     disp->scroll.has_start_time = false;
 }
 
+void display_stop_gif_unlocked(MarkeeDisplay *disp) {
+    if (!disp) return;
+    for (size_t i = 0; i < disp->gif.count && i < MARKEE_MAX_GIF_LAYERS; i++) {
+        gif_free(disp->gif.layers[i].gif);
+        disp->gif.layers[i].gif = NULL;
+    }
+    memset(disp->gif.layers, 0, sizeof(disp->gif.layers));
+    disp->gif.count = 0;
+    disp->gif.active = false;
+    disp->gif.has_last_time = false;
+    disp->gif.last_time = 0.0;
+}
+
+void display_stop_gif(MarkeeDisplay *disp) {
+    if (!disp) return;
+    pthread_mutex_lock(&disp->lock);
+    display_stop_gif_unlocked(disp);
+    pthread_mutex_unlock(&disp->lock);
+}
+
 bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     if (!disp) return false;
     if (width < MARKEE_MIN_DIM || width > MARKEE_MAX_DIM ||
@@ -81,21 +102,25 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     size_t frame_bytes = (size_t)width * (size_t)height * MARKEE_CHANNELS;
     uint8_t *pixels = calloc(frame_bytes, 1);
     uint8_t *bg_pixels = calloc(frame_bytes, 1);
-    if (!pixels || !bg_pixels) {
+    uint8_t *gif_bg_pixels = calloc(frame_bytes, 1);
+    if (!pixels || !bg_pixels || !gif_bg_pixels) {
         free(pixels);
         free(bg_pixels);
+        free(gif_bg_pixels);
         return false;
     }
 
     if (pthread_mutex_init(&disp->lock, NULL) != 0) {
         free(pixels);
         free(bg_pixels);
+        free(gif_bg_pixels);
         return false;
     }
     if (pthread_mutex_init(&disp->png_lock, NULL) != 0) {
         pthread_mutex_destroy(&disp->lock);
         free(pixels);
         free(bg_pixels);
+        free(gif_bg_pixels);
         return false;
     }
 
@@ -104,6 +129,7 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     disp->frame_bytes = frame_bytes;
     disp->pixels = pixels;
     disp->scroll.bg_pixels = bg_pixels;
+    disp->gif.bg_pixels = gif_bg_pixels;
     disp->brightness = 100;
     disp->demo_active = start_demo;
     return true;
@@ -111,18 +137,22 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
 
 void display_destroy(MarkeeDisplay *disp) {
     if (!disp) return;
+    display_stop_gif_unlocked(disp);
     pthread_mutex_destroy(&disp->png_lock);
     pthread_mutex_destroy(&disp->lock);
     free(disp->pixels);
     free(disp->scroll.bg_pixels);
+    free(disp->gif.bg_pixels);
     disp->pixels = NULL;
     disp->scroll.bg_pixels = NULL;
+    disp->gif.bg_pixels = NULL;
 }
 
 void display_clear(MarkeeDisplay *disp, bool stop_demo) {
     if (!disp || !disp->pixels) return;
     pthread_mutex_lock(&disp->lock);
     stop_scroll_unlocked(disp);
+    display_stop_gif_unlocked(disp);
     memset(disp->pixels, 0, disp->frame_bytes);
     if (stop_demo) {
         disp->demo_active = false;
@@ -136,6 +166,7 @@ void display_fill(MarkeeDisplay *disp, uint8_t r, uint8_t g, uint8_t b, bool sto
     if (!disp || !disp->pixels) return;
     pthread_mutex_lock(&disp->lock);
     stop_scroll_unlocked(disp);
+    display_stop_gif_unlocked(disp);
     for (size_t i = 0; i < disp->frame_bytes; i += 3) {
         disp->pixels[i + 0] = r;
         disp->pixels[i + 1] = g;
@@ -158,6 +189,7 @@ MarkeeResult display_set_pixel(MarkeeDisplay *disp, int x, int y,
     size_t idx = ((size_t)y * (size_t)disp->width + (size_t)x) * 3;
     pthread_mutex_lock(&disp->lock);
     stop_scroll_unlocked(disp);
+    display_stop_gif_unlocked(disp);
     disp->pixels[idx + 0] = r;
     disp->pixels[idx + 1] = g;
     disp->pixels[idx + 2] = b;
@@ -205,6 +237,7 @@ MarkeeResult display_set_raw_rgb(MarkeeDisplay *disp, const uint8_t *rgb, size_t
 
     pthread_mutex_lock(&disp->lock);
     stop_scroll_unlocked(disp);
+    display_stop_gif_unlocked(disp);
     memcpy(disp->pixels, rgb, disp->frame_bytes);
     if (stop_demo) {
         disp->demo_active = false;
@@ -291,7 +324,10 @@ void display_get_monochrome(MarkeeDisplay *disp, bool *enabled,
 void display_set_demo(MarkeeDisplay *disp, bool active) {
     if (!disp) return;
     pthread_mutex_lock(&disp->lock);
-    if (active) stop_scroll_unlocked(disp);
+    if (active) {
+        stop_scroll_unlocked(disp);
+        display_stop_gif_unlocked(disp);
+    }
     disp->demo_active = active;
     pthread_mutex_unlock(&disp->lock);
 }
@@ -407,6 +443,115 @@ void display_free_buffer(uint8_t *buf) {
     }
 }
 
+MarkeeResult display_load_gif(MarkeeDisplay *disp, const uint8_t *gif_data, size_t gif_len,
+                              int loop_override,
+                              uint8_t fill_r, uint8_t fill_g, uint8_t fill_b,
+                              MarkeeGifStatus *out_status,
+                              char *err_buf, size_t err_size) {
+    if (out_status) memset(out_status, 0, sizeof(*out_status));
+    if (err_buf && err_size > 0) err_buf[0] = '\0';
+
+    if (!disp || !disp->pixels || !gif_data || gif_len == 0 ||
+        gif_len > MARKEE_MAX_BODY_BYTES) {
+        if (err_buf && err_size > 0) snprintf(err_buf, err_size, "invalid GIF data");
+        return MARKEE_ERR_INVALID_GIF;
+    }
+
+    MarkeeGif *gif = NULL;
+    if (!gif_decode_ex(gif_data, gif_len, disp->width, disp->height,
+                       fill_r, fill_g, fill_b, &gif, err_buf, err_size)) {
+        return MARKEE_ERR_INVALID_GIF;
+    }
+
+    if (loop_override >= 0) {
+        gif->loop_count = (gif->frame_count <= 1) ? 1 : loop_override;
+    }
+
+    MarkeeGifStatus status;
+    memset(&status, 0, sizeof(status));
+    status.active = (gif->frame_count > 1);
+    status.src_width = gif->src_width;
+    status.src_height = gif->src_height;
+    status.frame_count = gif->frame_count;
+    status.current_frame = 0;
+    status.total_duration_ms = gif->total_duration_ms;
+    status.loop_count = gif->loop_count;
+    status.fill_r = gif->bg_r;
+    status.fill_g = gif->bg_g;
+    status.fill_b = gif->bg_b;
+
+    pthread_mutex_lock(&disp->lock);
+    stop_scroll_unlocked(disp);
+    display_stop_gif_unlocked(disp);
+
+    gif_blit_frame(gif, 0, disp->pixels, disp->width, disp->height);
+    if (gif->frame_count > 1) {
+        if (disp->gif.bg_pixels) {
+            for (size_t i = 0; i < disp->frame_bytes; i += 3) {
+                disp->gif.bg_pixels[i + 0] = fill_r;
+                disp->gif.bg_pixels[i + 1] = fill_g;
+                disp->gif.bg_pixels[i + 2] = fill_b;
+            }
+        }
+        disp->gif.layers[0].gif = gif;
+        disp->gif.layers[0].current_frame = 0;
+        disp->gif.layers[0].loops_done = 0;
+        disp->gif.layers[0].finished = false;
+        disp->gif.layers[0].accum_ms = 0.0;
+        disp->gif.count = 1;
+        disp->gif.active = true;
+        disp->gif.has_last_time = false;
+        disp->gif.last_time = 0.0;
+    } else {
+        gif_free(gif);
+    }
+
+    disp->demo_active = false;
+    disp->frames_received++;
+    disp->frame_seq++;
+    pthread_mutex_unlock(&disp->lock);
+
+    if (out_status) *out_status = status;
+    return MARKEE_OK;
+}
+
+bool display_get_gif_status(MarkeeDisplay *disp, MarkeeGifStatus *out_status) {
+    if (!disp || !out_status) return false;
+    memset(out_status, 0, sizeof(*out_status));
+    pthread_mutex_lock(&disp->lock);
+    bool active = disp->gif.active && disp->gif.count > 0 && disp->gif.layers[0].gif != NULL;
+    if (active) {
+        size_t idx = 0;
+        for (size_t i = 0; i < disp->gif.count; i++) {
+            if (!disp->gif.layers[i].finished && disp->gif.layers[i].gif) {
+                idx = i;
+                break;
+            }
+        }
+        const MarkeeGifLayer *L = &disp->gif.layers[idx];
+        out_status->active = true;
+        out_status->src_width = L->gif->src_width;
+        out_status->src_height = L->gif->src_height;
+        out_status->frame_count = L->gif->frame_count;
+        out_status->current_frame = L->current_frame;
+        out_status->total_duration_ms = L->gif->total_duration_ms;
+        out_status->loop_count = L->gif->loop_count;
+        out_status->fill_r = L->gif->bg_r;
+        out_status->fill_g = L->gif->bg_g;
+        out_status->fill_b = L->gif->bg_b;
+    }
+    pthread_mutex_unlock(&disp->lock);
+    return active;
+}
+
+bool display_is_gif_active(MarkeeDisplay *disp) {
+    if (!disp) return false;
+    pthread_mutex_lock(&disp->lock);
+    bool active = disp->gif.active && disp->gif.count > 0;
+    pthread_mutex_unlock(&disp->lock);
+    return active;
+}
+
 /* --- Built-in 60 Hz startup demo + scrolling text tick --- */
 
 static void hsv_to_rgb(float h, float s, float v, uint8_t *r, uint8_t *g, uint8_t *b) {
@@ -438,32 +583,110 @@ static void put_px(uint8_t *buf, int w, int h, int x, int y,
     buf[idx + 2] = b;
 }
 
-static void tick_scroll(MarkeeDisplay *disp, double time_sec) {
+static void tick_animations(MarkeeDisplay *disp, double time_sec) {
     pthread_mutex_lock(&disp->lock);
-    if (!disp->scroll.active || !disp->scroll.bg_pixels) {
+    bool gif_active = disp->gif.active && disp->gif.count > 0;
+    bool scroll_active = disp->scroll.active && disp->scroll.bg_pixels != NULL;
+    if (!gif_active && !scroll_active) {
         pthread_mutex_unlock(&disp->lock);
         return;
     }
 
-    if (!disp->scroll.has_start_time) {
-        disp->scroll.start_time = time_sec;
-        disp->scroll.has_start_time = true;
+    bool gif_changed = false;
+    bool all_gifs_done = false;
+
+    if (gif_active) {
+        if (!disp->gif.has_last_time) {
+            disp->gif.last_time = time_sec;
+            disp->gif.has_last_time = true;
+        } else {
+            double dt_ms = (time_sec - disp->gif.last_time) * 1000.0;
+            disp->gif.last_time = time_sec;
+            if (dt_ms > 0.0) {
+                size_t still_running = 0;
+                for (size_t i = 0; i < disp->gif.count; i++) {
+                    MarkeeGifLayer *L = &disp->gif.layers[i];
+                    if (L->finished || !L->gif || L->gif->frame_count <= 1) {
+                        continue;
+                    }
+                    MarkeeGif *g = L->gif;
+                    L->accum_ms += dt_ms;
+                    if (g->loop_count == 0 && g->total_duration_ms > 0 &&
+                        L->accum_ms >= (double)g->total_duration_ms) {
+                        L->accum_ms = fmod(L->accum_ms, (double)g->total_duration_ms);
+                    }
+                    while (!L->finished) {
+                        double delay = (double)g->delays_ms[L->current_frame];
+                        if (delay < 1.0) delay = 100.0;
+                        if (L->accum_ms < delay) break;
+
+                        L->accum_ms -= delay;
+                        if (L->current_frame + 1 < g->frame_count) {
+                            L->current_frame++;
+                            gif_changed = true;
+                        } else {
+                            L->loops_done++;
+                            if (g->loop_count > 0 && L->loops_done >= g->loop_count) {
+                                L->finished = true;
+                                break;
+                            }
+                            L->current_frame = 0;
+                            gif_changed = true;
+                        }
+                    }
+                    if (!L->finished) still_running++;
+                }
+                if (still_running == 0) {
+                    all_gifs_done = true;
+                }
+            }
+        }
     }
 
-    double elapsed = time_sec - disp->scroll.start_time;
-    if (elapsed < 0.0) elapsed = 0.0;
+    if (gif_changed || all_gifs_done || scroll_active) {
+        if (gif_active && disp->gif.bg_pixels) {
+            memcpy(disp->pixels, disp->gif.bg_pixels, disp->frame_bytes);
+            for (size_t i = 0; i < disp->gif.count; i++) {
+                MarkeeGifLayer *L = &disp->gif.layers[i];
+                if (L->gif) {
+                    gif_blit_frame(L->gif, L->current_frame,
+                                   disp->pixels, disp->width, disp->height);
+                }
+            }
+        } else if (scroll_active) {
+            memcpy(disp->pixels, disp->scroll.bg_pixels, disp->frame_bytes);
+        }
 
-    int offset = (int)floor(elapsed * disp->scroll.speed);
-    int text_w = disp->scroll.text_w > 0 ? disp->scroll.text_w : 1;
-    int span = disp->width + text_w;
-    int draw_x = ((disp->scroll.start_x - offset + text_w) % span + span) % span - text_w;
+        if (all_gifs_done) {
+            /* Bake final frames into scroll background (if scrolling continues) and free GIFs. */
+            if (scroll_active && disp->scroll.bg_pixels) {
+                memcpy(disp->scroll.bg_pixels, disp->pixels, disp->frame_bytes);
+            }
+            display_stop_gif_unlocked(disp);
+        }
 
-    memcpy(disp->pixels, disp->scroll.bg_pixels, disp->frame_bytes);
-    MarkeeColor col = {disp->scroll.r, disp->scroll.g, disp->scroll.b};
-    draw_render_text_buf(disp->pixels, disp->width, disp->height,
-                         draw_x, disp->scroll.y,
-                         disp->scroll.text, disp->scroll.font, col);
-    disp->frame_seq++;
+        if (scroll_active) {
+            if (!disp->scroll.has_start_time) {
+                disp->scroll.start_time = time_sec;
+                disp->scroll.has_start_time = true;
+            }
+            double elapsed = time_sec - disp->scroll.start_time;
+            if (elapsed < 0.0) elapsed = 0.0;
+
+            int offset = (int)floor(elapsed * disp->scroll.speed);
+            int text_w = disp->scroll.text_w > 0 ? disp->scroll.text_w : 1;
+            int span = disp->width + text_w;
+            int draw_x = ((disp->scroll.start_x - offset + text_w) % span + span) % span - text_w;
+
+            MarkeeColor col = {disp->scroll.r, disp->scroll.g, disp->scroll.b};
+            draw_render_text_buf(disp->pixels, disp->width, disp->height,
+                                 draw_x, disp->scroll.y,
+                                 disp->scroll.text, disp->scroll.font, col);
+        }
+
+        disp->frame_seq++;
+    }
+
     pthread_mutex_unlock(&disp->lock);
 }
 
@@ -471,7 +694,7 @@ void display_tick(MarkeeDisplay *disp, double time_sec) {
     if (!disp || !disp->pixels) return;
 
     if (!display_is_demo_active(disp)) {
-        tick_scroll(disp, time_sec);
+        tick_animations(disp, time_sec);
         return;
     }
 

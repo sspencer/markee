@@ -9,6 +9,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "gif.h"
 #include "json.h"
 
 /* --- Named + Hex Color Parsing --- */
@@ -637,8 +638,97 @@ static void default_white_stroke(const JsonValue *obj, bool *has_stroke, MarkeeC
     }
 }
 
-static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
+/* Base64 decoder for embedded GIF payloads in /draw.
+ * Accepts optional "data:...;base64," URI prefix, standard (+/) or URL-safe (-_) alphabet,
+ * and ignores ASCII whitespace. Caller frees *out_buf. */
+static int b64_val(unsigned char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+' || c == '-') return 62;
+    if (c == '/' || c == '_') return 63;
+    return -1;
+}
+
+static bool decode_base64(const char *s, uint8_t **out_buf, size_t *out_len) {
+    *out_buf = NULL;
+    *out_len = 0;
+    if (!s || !*s) return false;
+
+    while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+    if (strncasecmp(s, "data:", 5) == 0) {
+        const char *comma = strchr(s, ',');
+        if (!comma) return false;
+        s = comma + 1;
+    }
+
+    size_t slen = strlen(s);
+    size_t max_out = (slen / 4 + 1) * 3;
+    if (max_out == 0) return false;
+    uint8_t *buf = malloc(max_out);
+    if (!buf) return false;
+
+    uint32_t acc = 0;
+    int bits = 0;
+    size_t n = 0;
+    bool seen_pad = false;
+
+    for (size_t i = 0; i < slen; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        if (c == '=') {
+            seen_pad = true;
+            continue;
+        }
+        if (seen_pad) {
+            free(buf);
+            return false;
+        }
+        int v = b64_val(c);
+        if (v < 0) {
+            free(buf);
+            return false;
+        }
+        acc = (acc << 6) | (uint32_t)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (n >= MARKEE_MAX_BODY_BYTES) {
+                free(buf);
+                return false;
+            }
+            buf[n++] = (uint8_t)((acc >> bits) & 0xFFU);
+        }
+    }
+
+    /* A single dangling base64 sextet (6 bits) is never valid. */
+    if (n == 0 || bits == 6) {
+        free(buf);
+        return false;
+    }
+
+    *out_buf = buf;
+    *out_len = n;
+    return true;
+}
+
+typedef struct {
+    MarkeeGif *gifs[MARKEE_MAX_GIF_LAYERS];
+    size_t count;
+} StagedGifs;
+
+static void staged_gifs_clear(StagedGifs *sg) {
+    for (size_t i = 0; i < sg->count; i++) {
+        gif_free(sg->gifs[i]);
+        sg->gifs[i] = NULL;
+    }
+    sg->count = 0;
+}
+
+static bool exec_single_op_buf(uint8_t *buf, uint8_t *static_bg,
+                               int bw, int bh, size_t frame_bytes,
                                MarkeeScrollState *scroll_state,
+                               StagedGifs *staged_gifs,
                                const JsonValue *obj,
                                char *err_buf, size_t err_size) {
     if (!obj || obj->type != JSON_OBJECT) {
@@ -663,10 +753,14 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
         }
         scroll_state->active = false;
         scroll_state->has_start_time = false;
+        staged_gifs_clear(staged_gifs);
         for (size_t i = 0; i < frame_bytes; i += 3) {
             buf[i + 0] = c.r;
             buf[i + 1] = c.g;
             buf[i + 2] = c.b;
+            static_bg[i + 0] = c.r;
+            static_bg[i + 1] = c.g;
+            static_bg[i + 2] = c.b;
         }
         return true;
     }
@@ -679,10 +773,14 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
         if (hs) {
             put_px_buf(buf, bw, bh, x, y, sc);
+            put_px_buf(static_bg, bw, bh, x, y, sc);
         } else if (hf) {
             put_px_buf(buf, bw, bh, x, y, fc);
+            put_px_buf(static_bg, bw, bh, x, y, fc);
         } else if (!op_specifies_color(obj)) {
-            put_px_buf(buf, bw, bh, x, y, (MarkeeColor){255, 255, 255});
+            MarkeeColor w = {255, 255, 255};
+            put_px_buf(buf, bw, bh, x, y, w);
+            put_px_buf(static_bg, bw, bh, x, y, w);
         } /* else: explicit "none"/null color -> nothing to draw */
         return true;
     }
@@ -697,6 +795,7 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
         MarkeeColor c = hs ? sc : (hf ? fc : (MarkeeColor){255, 255, 255});
         draw_line_buf(buf, bw, bh, x1, y1, x2, y2, c);
+        draw_line_buf(static_bg, bw, bh, x1, y1, x2, y2, c);
         return true;
     }
 
@@ -711,6 +810,7 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
         default_white_stroke(obj, &hs, &sc);
         draw_rect_buf(buf, bw, bh, x, y, w, h, radius, hf, fc, hs, sc);
+        draw_rect_buf(static_bg, bw, bh, x, y, w, h, radius, hf, fc, hs, sc);
         return true;
     }
 
@@ -724,6 +824,7 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
         if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
         default_white_stroke(obj, &hs, &sc);
         draw_oval_buf(buf, bw, bh, x, y, w, h, hf, fc, hs, sc);
+        draw_oval_buf(static_bg, bw, bh, x, y, w, h, hf, fc, hs, sc);
         return true;
     }
 
@@ -763,6 +864,7 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
         }
         default_white_stroke(obj, &hs, &sc);
         draw_polygon_buf(buf, bw, bh, pts, n, hf, fc, hs, sc);
+        draw_polygon_buf(static_bg, bw, bh, pts, n, hf, fc, hs, sc);
         free(pts);
         return true;
     }
@@ -813,13 +915,93 @@ static bool exec_single_op_buf(uint8_t *buf, int bw, int bh, size_t frame_bytes,
         } else {
             scroll_state->active = false;
             scroll_state->has_start_time = false;
+            draw_render_text_buf(static_bg, bw, bh, x, y, text, font, c);
         }
 
         draw_render_text_buf(buf, bw, bh, x, y, text, font, c);
         return true;
     }
 
-    snprintf(err_buf, err_size, "unknown op '%s' (supported: line, rect, oval, polygon, text, pixel, clear)", op);
+    if (strcasecmp(op, "gif") == 0) {
+        const char *b64 = json_as_string(json_obj_get(obj, "data"));
+        if (!b64 || !*b64) {
+            snprintf(err_buf, err_size, "'gif' op requires base64 string field 'data'");
+            return false;
+        }
+
+        int x = opt_int(obj, "x", 0);
+        int y = opt_int(obj, "y", 0);
+
+        int loop_override = -1;
+        const JsonValue *jloop = json_obj_get(obj, "loop");
+        if (jloop && jloop->type != JSON_NULL) {
+            if (jloop->type == JSON_BOOL) {
+                loop_override = jloop->u.bval ? 0 : 1;
+            } else if (jloop->type == JSON_NUMBER) {
+                double d = jloop->u.nval;
+                if (d != (double)(long)d || d < 0.0 || d > 2147483647.0) {
+                    snprintf(err_buf, err_size,
+                             "'gif' op 'loop' must be a non-negative integer (0 = infinite)");
+                    return false;
+                }
+                loop_override = (int)d;
+            } else {
+                snprintf(err_buf, err_size,
+                         "'gif' op 'loop' must be a non-negative integer (0 = infinite)");
+                return false;
+            }
+        }
+
+        bool has_fill = false;
+        MarkeeColor fill_c = {0, 0, 0};
+        const JsonValue *jfill = json_obj_get(obj, "fill");
+        if (jfill && !parse_json_color(jfill, &has_fill, &fill_c)) {
+            snprintf(err_buf, err_size, "invalid 'fill' value for 'gif' op");
+            return false;
+        }
+
+        uint8_t *gif_bytes = NULL;
+        size_t gif_len = 0;
+        if (!decode_base64(b64, &gif_bytes, &gif_len)) {
+            snprintf(err_buf, err_size, "'gif' op contains invalid base64 in 'data'");
+            return false;
+        }
+
+        MarkeeGif *gif = NULL;
+        bool decoded = gif_decode_placed(gif_bytes, gif_len, bw, bh, x, y,
+                                         has_fill, fill_c.r, fill_c.g, fill_c.b,
+                                         &gif, err_buf, err_size);
+        free(gif_bytes);
+        if (!decoded) {
+            return false;
+        }
+
+        if (loop_override >= 0) {
+            gif->loop_count = (gif->frame_count <= 1) ? 1 : loop_override;
+        }
+
+        gif_blit_frame(gif, 0, buf, bw, bh);
+
+        if (gif->frame_count > 1 && gif->width > 0 && gif->height > 0) {
+            if (staged_gifs->count >= MARKEE_MAX_GIF_LAYERS) {
+                gif_free(gif);
+                snprintf(err_buf, err_size,
+                         "at most %d animated 'gif' ops are supported per /draw batch",
+                         MARKEE_MAX_GIF_LAYERS);
+                return false;
+            }
+            staged_gifs->gifs[staged_gifs->count++] = gif;
+        } else {
+            /* Static 1-frame GIF (or completely off-screen): bake into static background. */
+            gif_blit_frame(gif, 0, static_bg, bw, bh);
+            gif_free(gif);
+        }
+        return true;
+    }
+
+    snprintf(err_buf, err_size,
+             "unknown op '%s' (supported: line, rect, oval, polygon, text, pixel, clear, gif)",
+             op);
     return false;
 }
 
@@ -843,9 +1025,11 @@ bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
 
     const size_t frame_bytes = disp->frame_bytes;
     uint8_t *stage = malloc(frame_bytes);
+    uint8_t *static_bg = malloc(frame_bytes);
     uint8_t *stage_bg = malloc(frame_bytes);
-    if (!stage || !stage_bg) {
+    if (!stage || !static_bg || !stage_bg) {
         free(stage);
+        free(static_bg);
         free(stage_bg);
         json_free(root);
         snprintf(err_buf, err_size, "out of memory");
@@ -856,14 +1040,19 @@ bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
     memset(&next_scroll, 0, sizeof(next_scroll));
     next_scroll.bg_pixels = stage_bg;
 
+    StagedGifs staged_gifs;
+    memset(&staged_gifs, 0, sizeof(staged_gifs));
+
     pthread_mutex_lock(&disp->lock);
     memcpy(stage, disp->pixels, frame_bytes);
+    memcpy(static_bg, disp->pixels, frame_bytes);
 
     bool ok = true;
     int executed = 0;
     for (size_t i = 0; i < root->u.arr.count; i++) {
-        if (!exec_single_op_buf(stage, disp->width, disp->height, frame_bytes,
-                                &next_scroll, root->u.arr.items[i], err_buf, err_size)) {
+        if (!exec_single_op_buf(stage, static_bg, disp->width, disp->height, frame_bytes,
+                                &next_scroll, &staged_gifs,
+                                root->u.arr.items[i], err_buf, err_size)) {
             ok = false;
             break;
         }
@@ -871,6 +1060,7 @@ bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
     }
 
     if (ok) {
+        display_stop_gif_unlocked(disp);
         memcpy(disp->pixels, stage, frame_bytes);
         uint8_t *existing_bg = disp->scroll.bg_pixels;
         disp->scroll = next_scroll;
@@ -878,13 +1068,34 @@ bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
         if (next_scroll.active && existing_bg) {
             memcpy(existing_bg, stage_bg, frame_bytes);
         }
+        if (staged_gifs.count > 0) {
+            if (disp->gif.bg_pixels) {
+                memcpy(disp->gif.bg_pixels, static_bg, frame_bytes);
+            }
+            for (size_t i = 0; i < staged_gifs.count; i++) {
+                disp->gif.layers[i].gif = staged_gifs.gifs[i];
+                disp->gif.layers[i].current_frame = 0;
+                disp->gif.layers[i].loops_done = 0;
+                disp->gif.layers[i].finished = false;
+                disp->gif.layers[i].accum_ms = 0.0;
+                staged_gifs.gifs[i] = NULL;
+            }
+            disp->gif.count = staged_gifs.count;
+            disp->gif.active = true;
+            disp->gif.has_last_time = false;
+            disp->gif.last_time = 0.0;
+            staged_gifs.count = 0;
+        }
         disp->demo_active = false;
         disp->frames_received++;
         disp->frame_seq++;
+    } else {
+        staged_gifs_clear(&staged_gifs);
     }
     pthread_mutex_unlock(&disp->lock);
 
     free(stage);
+    free(static_bg);
     free(stage_bg);
     json_free(root);
     if (out_ops_executed) *out_ops_executed = ok ? executed : 0;
