@@ -19,6 +19,8 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "draw.h"
+#include "json.h"
 
 struct MarkeeServer {
     MarkeeDisplay *disp;
@@ -446,7 +448,16 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
          strcmp(req->path, "/api/info") == 0)) {
         double phys_w_in = (double)MARKEE_MATRIX_WIDTH_INCHES *
                            ((double)disp->width / (double)MARKEE_DEFAULT_WIDTH);
-        char json[512];
+        bool mono = false;
+        uint8_t mr = 0, mg = 0, mb = 0;
+        display_get_monochrome(disp, &mono, &mr, &mg, &mb);
+        char mono_json[16];
+        if (mono) {
+            snprintf(mono_json, sizeof(mono_json), "\"#%02x%02x%02x\"", mr, mg, mb);
+        } else {
+            snprintf(mono_json, sizeof(mono_json), "null");
+        }
+        char json[576];
         snprintf(json, sizeof(json),
                  "{\"name\":\"markee\","
                  "\"width\":%d,"
@@ -456,11 +467,13 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
                  "\"refresh_hz\":%d,"
                  "\"physical_width_inches\":%.2f,"
                  "\"brightness\":%u,"
+                 "\"monochrome\":%s,"
                  "\"demo_active\":%s,"
                  "\"frames_received\":%llu}",
                  disp->width, disp->height, disp->frame_bytes,
                  MARKEE_REFRESH_HZ, phys_w_in,
                  (unsigned)display_get_brightness(disp),
+                 mono_json,
                  display_is_demo_active(disp) ? "true" : "false",
                  (unsigned long long)display_get_frames_received(disp));
         send_json(fd, 200, "OK", json, ka);
@@ -644,6 +657,160 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         snprintf(json, sizeof(json),
                  "{\"ok\":true,\"x\":%d,\"y\":%d,\"r\":%u,\"g\":%u,\"b\":%u}",
                  x, y, r, g, b);
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* POST or PUT /draw (and /api/draw): JSON array of one or more draw ops */
+    if ((strcmp(req->method, "POST") == 0 || strcmp(req->method, "PUT") == 0) &&
+        (strcmp(req->path, "/draw") == 0 || strcmp(req->path, "/api/draw") == 0)) {
+        if (!req->body || req->body_len == 0) {
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"empty body; send a JSON array of one or more draw operations\"}", ka);
+            return;
+        }
+        int executed = 0;
+        char err[256] = {0};
+        if (!draw_exec_json(disp, (const char *)req->body, req->body_len,
+                            &executed, err, sizeof(err))) {
+            char resp[320];
+            snprintf(resp, sizeof(resp), "{\"error\":\"%s\"}",
+                     err[0] ? err : "invalid draw request");
+            send_json(fd, 400, "Bad Request", resp, ka);
+            return;
+        }
+        char json[128];
+        snprintf(json, sizeof(json), "{\"ok\":true,\"ops\":%d}", executed);
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* GET /monochrome */
+    if (strcmp(req->method, "GET") == 0 &&
+        (strcmp(req->path, "/monochrome") == 0 || strcmp(req->path, "/mono") == 0)) {
+        bool enabled = false;
+        uint8_t mr = 0, mg = 0, mb = 0;
+        display_get_monochrome(disp, &enabled, &mr, &mg, &mb);
+        char json[128];
+        if (enabled) {
+            snprintf(json, sizeof(json),
+                     "{\"enabled\":true,\"r\":%u,\"g\":%u,\"b\":%u,\"hex\":\"#%02x%02x%02x\"}",
+                     mr, mg, mb, mr, mg, mb);
+        } else {
+            snprintf(json, sizeof(json), "{\"enabled\":false,\"color\":null}");
+        }
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
+    /* DELETE /monochrome */
+    if (strcmp(req->method, "DELETE") == 0 &&
+        (strcmp(req->path, "/monochrome") == 0 || strcmp(req->path, "/mono") == 0)) {
+        display_set_monochrome(disp, false, 0, 0, 0);
+        send_json(fd, 200, "OK", "{\"ok\":true,\"enabled\":false,\"color\":null}", ka);
+        return;
+    }
+
+    /* POST or PUT /monochrome (also /mono):
+     * Accepts ?color=#rrggbb, JSON {"color":"#rrggbb"} / {"color":null}, or plain body "#rrggbb" / "off" */
+    if ((strcmp(req->method, "POST") == 0 || strcmp(req->method, "PUT") == 0) &&
+        (strcmp(req->path, "/monochrome") == 0 || strcmp(req->path, "/mono") == 0)) {
+        bool disable = false;
+        bool has_color = false;
+        MarkeeColor mc = {0, 0, 0};
+        char val[64];
+
+        if (query_get(req->query, "color", val, sizeof(val))) {
+            /* Decode leading %23 for URL-encoded '#' */
+            const char *s = val;
+            char unesc[64];
+            if (s[0] == '%' && s[1] == '2' && s[2] == '3') {
+                snprintf(unesc, sizeof(unesc), "#%s", s + 3);
+                s = unesc;
+            }
+            if (strcasecmp(s, "none") == 0 || strcasecmp(s, "off") == 0 ||
+                strcasecmp(s, "false") == 0 || strcasecmp(s, "null") == 0) {
+                disable = true;
+            } else if (draw_parse_color_string(s, &mc)) {
+                has_color = true;
+            }
+        } else if (query_get(req->query, "enabled", val, sizeof(val)) &&
+                   (strcmp(val, "0") == 0 || strcasecmp(val, "false") == 0)) {
+            disable = true;
+        } else if (req->body && req->body_len > 0) {
+            /* Try JSON first, then trimmed plain text color string */
+            JsonValue *root = json_parse((const char *)req->body, req->body_len, NULL, 0);
+            if (root) {
+                if (root->type == JSON_NULL) {
+                    disable = true;
+                } else if (root->type == JSON_STRING) {
+                    const char *s = root->u.sval;
+                    if (strcasecmp(s, "none") == 0 || strcasecmp(s, "off") == 0) {
+                        disable = true;
+                    } else if (draw_parse_color_string(s, &mc)) {
+                        has_color = true;
+                    }
+                } else if (root->type == JSON_OBJECT) {
+                    const JsonValue *jen = json_obj_get(root, "enabled");
+                    bool en = true;
+                    if (jen && json_as_bool(jen, &en) && !en) {
+                        disable = true;
+                    } else {
+                        const JsonValue *jcol = json_obj_get(root, "color");
+                        if (jcol) {
+                            if (jcol->type == JSON_NULL) {
+                                disable = true;
+                            } else if (jcol->type == JSON_STRING) {
+                                const char *s = jcol->u.sval;
+                                if (strcasecmp(s, "none") == 0 || strcasecmp(s, "off") == 0) {
+                                    disable = true;
+                                } else if (draw_parse_color_string(s, &mc)) {
+                                    has_color = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                json_free(root);
+            } else {
+                const char *s = (const char *)req->body;
+                while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+                size_t len = strlen(s);
+                while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t' ||
+                                   s[len - 1] == '\r' || s[len - 1] == '\n')) {
+                    len--;
+                }
+                if (len > 0 && len < sizeof(val)) {
+                    memcpy(val, s, len);
+                    val[len] = '\0';
+                    if (strcasecmp(val, "none") == 0 || strcasecmp(val, "off") == 0 ||
+                        strcasecmp(val, "false") == 0 || strcasecmp(val, "null") == 0) {
+                        disable = true;
+                    } else if (draw_parse_color_string(val, &mc)) {
+                        has_color = true;
+                    }
+                }
+            }
+        }
+
+        if (!disable && !has_color) {
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"provide a 24-bit color (e.g. #00ff00, #ffbf00, amber) or 'off'/'none' to disable\"}",
+                      ka);
+            return;
+        }
+
+        if (disable) {
+            display_set_monochrome(disp, false, 0, 0, 0);
+            send_json(fd, 200, "OK", "{\"ok\":true,\"enabled\":false,\"color\":null}", ka);
+            return;
+        }
+
+        display_set_monochrome(disp, true, mc.r, mc.g, mc.b);
+        char json[128];
+        snprintf(json, sizeof(json),
+                 "{\"ok\":true,\"enabled\":true,\"r\":%u,\"g\":%u,\"b\":%u,\"hex\":\"#%02x%02x%02x\"}",
+                 mc.r, mc.g, mc.b, mc.r, mc.g, mc.b);
         send_json(fd, 200, "OK", json, ka);
         return;
     }

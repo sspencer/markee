@@ -12,6 +12,7 @@
 
 #include "config.h"
 #include "display.h"
+#include "draw.h"
 #include "raylib.h"
 #include "renderer.h"
 #include "server.h"
@@ -77,6 +78,8 @@ static void print_usage(const char *prog) {
            "      --square            Render each LED pixel as a square (default)\n"
            "      --circle            Render each LED pixel as a circle\n"
            "  -s, --shape <style>     Pixel display style: square or circle (default: square)\n"
+           "  -m, --monochrome <hex>  Apply BT.709 perceptual monochrome filter (e.g. #00ff00,\n"
+           "                          #ffbf00, amber, red, green)\n"
            "  -H, --host <ip>         Bind IP address (default: %s)\n"
            "  -p, --port <port>       TCP port to listen on (default: %d, or MARKEE_PORT)\n"
            "      --dpi <value>       Override monitor logical DPI for physical sizing\n"
@@ -86,6 +89,7 @@ static void print_usage(const char *prog) {
            "Keyboard shortcuts (GUI mode):\n"
            "  C                       Clear display\n"
            "  D                       Toggle startup demo animation\n"
+           "  M                       Toggle monochrome filter on/off (default amber #ffbf00)\n"
            "  P                       Toggle pixel shape (square / circle)\n"
            "  S                       Save current frame to snapshot.png\n"
            "  + / -                   Adjust brightness (+/- 10%%)\n"
@@ -93,6 +97,7 @@ static void print_usage(const char *prog) {
            "Examples:\n"
            "  %s                           # Default 72x16 square LEDs at 1.0x zoom\n"
            "  %s --circle --zoom 2         # 72x16 circular LEDs at 2x size\n"
+           "  %s -m \"#ffbf00\"              # Monochrome amber phosphor filter\n"
            "  %s -r 128x32 -z 0.75         # Custom 128x32 LED matrix at 0.75x zoom\n",
            prog,
            MARKEE_DEFAULT_WIDTH, MARKEE_DEFAULT_HEIGHT,
@@ -100,7 +105,7 @@ static void print_usage(const char *prog) {
            MARKEE_MIN_DIM, MARKEE_MAX_DIM,
            MARKEE_DEFAULT_ZOOM, MARKEE_MIN_ZOOM, MARKEE_MAX_ZOOM,
            MARKEE_DEFAULT_HOST, MARKEE_DEFAULT_PORT,
-           prog, prog, prog);
+           prog, prog, prog, prog);
 }
 
 static void save_snapshot_png(MarkeeDisplay *disp, const char *filename) {
@@ -130,6 +135,8 @@ int main(int argc, char **argv) {
     int height = MARKEE_DEFAULT_HEIGHT;
     float zoom = MARKEE_DEFAULT_ZOOM;
     MarkeePixelShape pixel_shape = MARKEE_PIXEL_SQUARE;
+    bool mono_enabled = false;
+    MarkeeColor mono_color = {255, 191, 0}; /* Default amber if toggled with 'M' */
     const char *host = MARKEE_DEFAULT_HOST;
     uint16_t port = MARKEE_DEFAULT_PORT;
     float override_dpi = 0.0f;
@@ -165,6 +172,14 @@ int main(int argc, char **argv) {
                         argv[i]);
                 return 1;
             }
+        } else if ((strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--monochrome") == 0 ||
+                    strcmp(argv[i], "--mono") == 0) && i + 1 < argc) {
+            if (!draw_parse_color_string(argv[++i], &mono_color)) {
+                fprintf(stderr, "Invalid monochrome color '%s' (expected #rrggbb or color name)\n",
+                        argv[i]);
+                return 1;
+            }
+            mono_enabled = true;
         } else if ((strcmp(argv[i], "-H") == 0 || strcmp(argv[i], "--host") == 0) && i + 1 < argc) {
             host = argv[++i];
         } else if ((strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--port") == 0) && i + 1 < argc) {
@@ -206,6 +221,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to initialize %dx%d display state\n", width, height);
         return 1;
     }
+    if (mono_enabled) {
+        display_set_monochrome(&display, true, mono_color.r, mono_color.g, mono_color.b);
+    }
 
     MarkeeServer *srv = server_start(&display, host, port);
     if (!srv) {
@@ -215,14 +233,23 @@ int main(int argc, char **argv) {
     }
 
     uint16_t actual_port = server_get_port(srv);
-    printf("markee (%dx%d, zoom=%.2fx, pixels=%s) API listening on http://%s:%u\n",
-           width, height, zoom,
-           pixel_shape == MARKEE_PIXEL_CIRCLE ? "circle" : "square",
-           host, (unsigned)actual_port);
+    if (mono_enabled) {
+        printf("markee (%dx%d, zoom=%.2fx, pixels=%s, monochrome=#%02x%02x%02x) API listening on http://%s:%u\n",
+               width, height, zoom,
+               pixel_shape == MARKEE_PIXEL_CIRCLE ? "circle" : "square",
+               mono_color.r, mono_color.g, mono_color.b,
+               host, (unsigned)actual_port);
+    } else {
+        printf("markee (%dx%d, zoom=%.2fx, pixels=%s) API listening on http://%s:%u\n",
+               width, height, zoom,
+               pixel_shape == MARKEE_PIXEL_CIRCLE ? "circle" : "square",
+               host, (unsigned)actual_port);
+    }
     printf("  POST /frame   Upload %dx%d PNG (or %zu-byte raw RGB24)\n",
            width, height, display.frame_bytes);
     printf("  GET  /frame   Download displayed %dx%d pixels as PNG (?format=raw for RGB24)\n",
            width, height);
+    printf("  POST /draw    Draw JSON shapes/text (line, rect, oval, polygon, text)\n");
     printf("  GET  /info    Device status & capabilities\n");
     fflush(stdout);
 
@@ -230,7 +257,7 @@ int main(int argc, char **argv) {
         struct timespec ts = {.tv_sec = 0, .tv_nsec = 16666667L}; /* ~60 Hz */
         double t = 0.0;
         while (!atomic_load(&g_quit)) {
-            display_tick_demo(&display, t);
+            display_tick(&display, t);
             nanosleep(&ts, NULL);
             t += 1.0 / (double)MARKEE_REFRESH_HZ;
         }
@@ -254,6 +281,21 @@ int main(int argc, char **argv) {
             if (IsKeyPressed(KEY_D)) {
                 display_set_demo(&display, !display_is_demo_active(&display));
             }
+            if (IsKeyPressed(KEY_M)) {
+                bool en = false;
+                uint8_t mr = 0, mg = 0, mb = 0;
+                display_get_monochrome(&display, &en, &mr, &mg, &mb);
+                if (en) {
+                    display_set_monochrome(&display, false, 0, 0, 0);
+                } else {
+                    if (mr == 0 && mg == 0 && mb == 0) {
+                        mr = mono_color.r;
+                        mg = mono_color.g;
+                        mb = mono_color.b;
+                    }
+                    display_set_monochrome(&display, true, mr, mg, mb);
+                }
+            }
             if (IsKeyPressed(KEY_P)) {
                 layout.pixel_shape = (layout.pixel_shape == MARKEE_PIXEL_SQUARE)
                                          ? MARKEE_PIXEL_CIRCLE
@@ -271,7 +313,7 @@ int main(int argc, char **argv) {
                 display_set_brightness(&display, b < 10 ? 0 : (uint8_t)(b - 10));
             }
 
-            display_tick_demo(&display, GetTime());
+            display_tick(&display, GetTime());
 
             uint8_t brightness = 100;
             display_snapshot(&display, frame_buf, display.frame_bytes, &brightness);

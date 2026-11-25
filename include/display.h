@@ -18,6 +18,20 @@ typedef enum {
 } MarkeeResult;
 
 typedef struct {
+    bool active;
+    char text[512];
+    char font[16];
+    int start_x;
+    int y;
+    int text_w;
+    uint8_t r, g, b;
+    double speed;       /* pixels per second */
+    bool has_start_time;
+    double start_time;
+    uint8_t *bg_pixels; /* background snapshot underneath scrolling text */
+} MarkeeScrollState;
+
+typedef struct {
     pthread_mutex_t lock;
     pthread_mutex_t png_lock;
     int width;
@@ -25,9 +39,14 @@ typedef struct {
     size_t frame_bytes;                 /* width * height * 3 */
     uint8_t *pixels;                    /* Row-major WxH 24-bit RGB */
     uint8_t brightness;                 /* 0..100 */
+    bool mono_enabled;                  /* Non-destructive BT.709 monochrome tint filter */
+    uint8_t mono_r;
+    uint8_t mono_g;
+    uint8_t mono_b;
     bool demo_active;                   /* Startup animation enabled until API write */
     uint64_t frames_received;
     uint64_t frame_seq;
+    MarkeeScrollState scroll;
 } MarkeeDisplay;
 
 /* Initialize and destroy display state for the given resolution (width x height). */
@@ -49,9 +68,13 @@ bool display_get_raw_rgb(MarkeeDisplay *disp, uint8_t *out_rgb, size_t out_cap);
 bool display_snapshot(MarkeeDisplay *disp, uint8_t *out_rgb, size_t out_cap,
                       uint8_t *out_brightness);
 
-/* Brightness (0..100) and demo controls. */
+/* Brightness (0..100), monochrome filter, and demo controls. */
 void display_set_brightness(MarkeeDisplay *disp, uint8_t brightness);
 uint8_t display_get_brightness(MarkeeDisplay *disp);
+void display_set_monochrome(MarkeeDisplay *disp, bool enabled,
+                            uint8_t r, uint8_t g, uint8_t b);
+void display_get_monochrome(MarkeeDisplay *disp, bool *enabled,
+                            uint8_t *r, uint8_t *g, uint8_t *b);
 void display_set_demo(MarkeeDisplay *disp, bool active);
 bool display_is_demo_active(MarkeeDisplay *disp);
 uint64_t display_get_frames_received(MarkeeDisplay *disp);
@@ -63,7 +86,10 @@ MarkeeResult display_load_png(MarkeeDisplay *disp, const uint8_t *png_data, size
 MarkeeResult display_encode_png(MarkeeDisplay *disp, uint8_t **out_png, size_t *out_len);
 void display_free_buffer(uint8_t *buf);
 
-/* Update the built-in startup demo animation for time_sec (no-op if demo_active is false). */
+/* Advance 60 Hz animations (startup demo or active scrolling text). */
+void display_tick(MarkeeDisplay *disp, double time_sec);
+
+/* Backward-compatible alias for display_tick(). */
 void display_tick_demo(MarkeeDisplay *disp, double time_sec);
 
 #endif /* MARKEE_DISPLAY_H */

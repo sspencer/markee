@@ -393,6 +393,211 @@ static void test_custom_resolution_api(void) {
     printf("[PASS] custom resolution (32x8) API & PNG roundtrip\n");
 }
 
+static void test_draw_api(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, false));
+
+    MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+    uint8_t pr, pg, pb;
+
+    /* 1. Single-element array with line op */
+    const char *line_json = "[{ \"op\": \"line\", \"x1\": 0, \"y1\": 15, \"x2\": 71, \"y2\": 0, \"color\": \"#00FF00\" }]";
+    HttpResp r = do_request(port, "POST", "/draw", "application/json", line_json, strlen(line_json));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"ops\":1") != NULL);
+    free(r.body);
+
+    assert(display_get_pixel(&disp, 0, 15, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 255 && pb == 0);
+    assert(display_get_pixel(&disp, 71, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 255 && pb == 0);
+
+    /* 2. Multi-shape scene array: clear + rounded rect + oval + polygon */
+    const char *scene_json = "["
+        "{ \"op\": \"clear\" },"
+        "{ \"op\": \"rect\", \"x\": 2, \"y\": 2, \"w\": 30, \"h\": 12, \"color\": \"white\", \"fill\": \"#002040\", \"radius\": 2 },"
+        "{ \"op\": \"oval\", \"x\": 40, \"y\": 0, \"w\": 16, \"h\": 16, \"color\": \"yellow\", \"fill\": \"yellow\" },"
+        "{ \"op\": \"polygon\", \"points\": [[60,14],[66,2],[71,14]], \"color\": \"red\", \"fill\": \"red\" }"
+    "]";
+    r = do_request(port, "POST", "/draw", "application/json", scene_json, strlen(scene_json));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"ops\":4") != NULL);
+    free(r.body);
+
+    /* Rounded rect corner clipped off -> black; top edge -> white; interior -> #002040 */
+    assert(display_get_pixel(&disp, 2, 2, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 0);
+    assert(display_get_pixel(&disp, 5, 2, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 255 && pb == 255);
+    assert(display_get_pixel(&disp, 10, 7, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0x00 && pg == 0x20 && pb == 0x40);
+
+    /* Oval corner outside -> black; center -> yellow */
+    assert(display_get_pixel(&disp, 40, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 0);
+    assert(display_get_pixel(&disp, 47, 7, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 255 && pb == 0);
+
+    /* Polygon vertex & interior -> red; outside -> black */
+    assert(display_get_pixel(&disp, 66, 2, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 0 && pb == 0);
+    assert(display_get_pixel(&disp, 66, 10, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 0 && pb == 0);
+    assert(display_get_pixel(&disp, 60, 2, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 0);
+
+    /* 3. Text op with 3-digit hex #FFF and scroll:true inside an array */
+    const char *text_json = "["
+        "{ \"op\": \"clear\" },"
+        "{ \"op\": \"text\", \"x\": 4, \"y\": 4, \"text\": \"OK\", \"font\": \"6x8\", \"color\": \"#FFF\", \"scroll\": true }"
+    "]";
+    r = do_request(port, "POST", "/draw", "application/json", text_json, strlen(text_json));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"ops\":2") != NULL);
+    free(r.body);
+
+    int lit_before = 0;
+    for (int y = 4; y < 11; y++) {
+        for (int x = 4; x < 16; x++) {
+            assert(display_get_pixel(&disp, x, y, &pr, &pg, &pb) == MARKEE_OK);
+            if (pr == 255 && pg == 255 && pb == 255) lit_before++;
+        }
+    }
+    assert(lit_before > 10);
+
+    display_tick(&disp, 1.0);
+    display_tick(&disp, 1.5);
+    int lit_after_same_box = 0;
+    for (int y = 4; y < 11; y++) {
+        for (int x = 4; x < 16; x++) {
+            assert(display_get_pixel(&disp, x, y, &pr, &pg, &pb) == MARKEE_OK);
+            if (pr == 255 && pg == 255 && pb == 255) lit_after_same_box++;
+        }
+    }
+    assert(lit_after_same_box < lit_before);
+
+    /* 4. Bare JSON object (not an array) and empty array [] are rejected with 400 */
+    const char *bare_obj = "{ \"op\": \"line\", \"x1\": 0, \"y1\": 0, \"x2\": 5, \"y2\": 5, \"color\": \"white\" }";
+    r = do_request(port, "POST", "/draw", "application/json", bare_obj, strlen(bare_obj));
+    assert(r.status == 400);
+    free(r.body);
+
+    r = do_request(port, "POST", "/draw", "application/json", "[]", 2);
+    assert(r.status == 400);
+    free(r.body);
+
+    /* 5. Atomic rollback: if a later op in the array fails, earlier ops are not committed */
+    const char *setup = "[{\"op\":\"clear\"},{\"op\":\"pixel\",\"x\":0,\"y\":0,\"color\":\"blue\"}]";
+    r = do_request(port, "POST", "/draw", "application/json", setup, strlen(setup));
+    assert(r.status == 200);
+    free(r.body);
+
+    const char *bad_batch = "[{\"op\":\"pixel\",\"x\":0,\"y\":0,\"color\":\"red\"},{\"op\":\"star\"}]";
+    r = do_request(port, "POST", "/draw", "application/json", bad_batch, strlen(bad_batch));
+    assert(r.status == 400);
+    free(r.body);
+
+    /* Pixel (0,0) must still be blue (not overwritten by red) */
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 255);
+
+    server_stop(srv);
+    display_destroy(&disp);
+    printf("[PASS] POST /draw JSON array API (line, rect+radius, oval, polygon, text+scroll, atomic)\n");
+}
+
+static void test_monochrome_filter(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, false));
+
+    /* Set distinct pure primary + white + black pixels */
+    assert(display_set_pixel(&disp, 0, 0, 255, 255, 255, true) == MARKEE_OK); /* white */
+    assert(display_set_pixel(&disp, 1, 0,   0, 255,   0, true) == MARKEE_OK); /* pure green */
+    assert(display_set_pixel(&disp, 2, 0, 255,   0,   0, true) == MARKEE_OK); /* pure red */
+    assert(display_set_pixel(&disp, 3, 0,   0,   0, 255, true) == MARKEE_OK); /* pure blue */
+    assert(display_set_pixel(&disp, 4, 0,   0,   0,   0, true) == MARKEE_OK); /* black */
+
+    MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+
+    /* 1. Enable green monochrome filter via JSON body */
+    const char *green_req = "{\"color\":\"#00ff00\"}";
+    HttpResp r = do_request(port, "POST", "/monochrome", "application/json",
+                            green_req, strlen(green_req));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"hex\":\"#00ff00\"") != NULL);
+    free(r.body);
+
+    /* Check GET /info reports monochrome */
+    r = do_request(port, "GET", "/info", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"monochrome\":\"#00ff00\"") != NULL);
+    free(r.body);
+
+    /* Verify BT.709 perceptual luminance ordering: white (255) > green (~220) > red (~127) > blue (~76) > black (0) */
+    uint8_t wr, wg, wb, gr, gg, gb, rr, rg, rb, br, bg, bb, kr, kg, kb;
+    assert(display_get_pixel(&disp, 0, 0, &wr, &wg, &wb) == MARKEE_OK);
+    assert(display_get_pixel(&disp, 1, 0, &gr, &gg, &gb) == MARKEE_OK);
+    assert(display_get_pixel(&disp, 2, 0, &rr, &rg, &rb) == MARKEE_OK);
+    assert(display_get_pixel(&disp, 3, 0, &br, &bg, &bb) == MARKEE_OK);
+    assert(display_get_pixel(&disp, 4, 0, &kr, &kg, &kb) == MARKEE_OK);
+
+    assert(wr == 0 && wg == 255 && wb == 0);
+    assert(gr == 0 && gb == 0 && rr == 0 && rb == 0 && br == 0 && bb == 0);
+    assert(kr == 0 && kg == 0 && kb == 0);
+    assert(wg > gg && gg > rg && rg > bg && bg > kg);
+
+    /* 2. Switch to amber (#ffbf00) via plain text body — non-destructive from original colors */
+    const char *amber_req = "#ffbf00";
+    r = do_request(port, "POST", "/monochrome", "text/plain", amber_req, strlen(amber_req));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"hex\":\"#ffbf00\"") != NULL);
+    free(r.body);
+
+    assert(display_get_pixel(&disp, 0, 0, &wr, &wg, &wb) == MARKEE_OK);
+    assert(wr == 0xff && wg == 0xbf && wb == 0x00);
+
+    /* GET /frame PNG readback reflects active amber monochrome pixels */
+    r = do_request(port, "GET", "/frame", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strcmp(r.content_type, "image/png") == 0);
+    Image img = LoadImageFromMemory(".png", r.body, (int)r.body_len);
+    assert(img.data != NULL && img.width == 72 && img.height == 16);
+    ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8);
+    const uint8_t *px = (const uint8_t *)img.data;
+    assert(px[0] == 0xff && px[1] == 0xbf && px[2] == 0x00); /* pixel (0,0) white -> amber */
+    assert(px[3] > px[6] && px[6] > px[9]);                  /* green > red > blue */
+    UnloadImage(img);
+    free(r.body);
+
+    /* 3. Disable monochrome via POST {"color":null} — original full RGB colors restored */
+    const char *off_req = "{\"color\":null}";
+    r = do_request(port, "POST", "/monochrome", "application/json", off_req, strlen(off_req));
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"enabled\":false") != NULL);
+    free(r.body);
+
+    assert(display_get_pixel(&disp, 0, 0, &wr, &wg, &wb) == MARKEE_OK);
+    assert(wr == 255 && wg == 255 && wb == 255);
+    assert(display_get_pixel(&disp, 2, 0, &rr, &rg, &rb) == MARKEE_OK);
+    assert(rr == 255 && rg == 0 && rb == 0);
+    assert(display_get_pixel(&disp, 3, 0, &br, &bg, &bb) == MARKEE_OK);
+    assert(br == 0 && bg == 0 && bb == 255);
+
+    /* 4. Invalid monochrome color rejected with 400 */
+    const char *bad = "{\"color\":\"notacolor\"}";
+    r = do_request(port, "POST", "/monochrome", "application/json", bad, strlen(bad));
+    assert(r.status == 400);
+    free(r.body);
+
+    server_stop(srv);
+    display_destroy(&disp);
+    printf("[PASS] BT.709 monochrome filter (perceptual luminance, PNG readback, non-destructive toggle)\n");
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     SetTraceLogLevel(LOG_ERROR);
@@ -401,6 +606,8 @@ int main(void) {
     test_display_and_png_roundtrip();
     test_http_socket_api();
     test_custom_resolution_api();
+    test_draw_api();
+    test_monochrome_filter();
 
     printf("\nAll markee tests passed!\n");
     return 0;

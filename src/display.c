@@ -6,9 +6,69 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "draw.h"
 #include "raylib.h"
 
 static const uint8_t PNG_SIG[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+
+/* --- sRGB <-> Linear Light BT.709 Monochrome Phosphor Filter --- */
+
+static float srgb_u8_to_linear(uint8_t c) {
+    float s = (float)c / 255.0f;
+    if (s <= 0.04045f) return s / 12.92f;
+    return powf((s + 0.055f) / 1.055f, 2.4f);
+}
+
+static uint8_t linear_to_srgb_u8(float lin) {
+    if (lin <= 0.0f) return 0;
+    if (lin >= 1.0f) return 255;
+    float s = (lin <= 0.0031308f) ? (12.92f * lin) : (1.055f * powf(lin, 1.0f / 2.4f) - 0.055f);
+    int v = (int)lroundf(s * 255.0f);
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return (uint8_t)v;
+}
+
+static float g_srgb_lut[256];
+static pthread_once_t g_lut_once = PTHREAD_ONCE_INIT;
+
+static void init_srgb_lut(void) {
+    for (int i = 0; i < 256; i++) {
+        g_srgb_lut[i] = srgb_u8_to_linear((uint8_t)i);
+    }
+}
+
+/* Transform a single 24-bit RGB pixel into a monochrome shade of (tr, tg, tb)
+ * preserving true perceptual relative luminance (ITU-R BT.709 in linear light)
+ * and constant tint chromaticity across all brightness levels. */
+static void apply_monochrome_pixel(uint8_t in_r, uint8_t in_g, uint8_t in_b,
+                                   float tint_r_lin, float tint_g_lin, float tint_b_lin,
+                                   uint8_t *out_r, uint8_t *out_g, uint8_t *out_b) {
+    float y_lin = 0.2126f * g_srgb_lut[in_r] +
+                  0.7152f * g_srgb_lut[in_g] +
+                  0.0722f * g_srgb_lut[in_b];
+    *out_r = linear_to_srgb_u8(y_lin * tint_r_lin);
+    *out_g = linear_to_srgb_u8(y_lin * tint_g_lin);
+    *out_b = linear_to_srgb_u8(y_lin * tint_b_lin);
+}
+
+static void apply_monochrome_buffer(uint8_t *buf, size_t frame_bytes,
+                                    uint8_t tr, uint8_t tg, uint8_t tb) {
+    pthread_once(&g_lut_once, init_srgb_lut);
+    float tr_lin = g_srgb_lut[tr];
+    float tg_lin = g_srgb_lut[tg];
+    float tb_lin = g_srgb_lut[tb];
+    for (size_t i = 0; i < frame_bytes; i += 3) {
+        apply_monochrome_pixel(buf[i + 0], buf[i + 1], buf[i + 2],
+                               tr_lin, tg_lin, tb_lin,
+                               &buf[i + 0], &buf[i + 1], &buf[i + 2]);
+    }
+}
+
+static void stop_scroll_unlocked(MarkeeDisplay *disp) {
+    disp->scroll.active = false;
+    disp->scroll.has_start_time = false;
+}
 
 bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     if (!disp) return false;
@@ -20,17 +80,22 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     memset(disp, 0, sizeof(*disp));
     size_t frame_bytes = (size_t)width * (size_t)height * MARKEE_CHANNELS;
     uint8_t *pixels = calloc(frame_bytes, 1);
-    if (!pixels) {
+    uint8_t *bg_pixels = calloc(frame_bytes, 1);
+    if (!pixels || !bg_pixels) {
+        free(pixels);
+        free(bg_pixels);
         return false;
     }
 
     if (pthread_mutex_init(&disp->lock, NULL) != 0) {
         free(pixels);
+        free(bg_pixels);
         return false;
     }
     if (pthread_mutex_init(&disp->png_lock, NULL) != 0) {
         pthread_mutex_destroy(&disp->lock);
         free(pixels);
+        free(bg_pixels);
         return false;
     }
 
@@ -38,6 +103,7 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     disp->height = height;
     disp->frame_bytes = frame_bytes;
     disp->pixels = pixels;
+    disp->scroll.bg_pixels = bg_pixels;
     disp->brightness = 100;
     disp->demo_active = start_demo;
     return true;
@@ -48,12 +114,15 @@ void display_destroy(MarkeeDisplay *disp) {
     pthread_mutex_destroy(&disp->png_lock);
     pthread_mutex_destroy(&disp->lock);
     free(disp->pixels);
+    free(disp->scroll.bg_pixels);
     disp->pixels = NULL;
+    disp->scroll.bg_pixels = NULL;
 }
 
 void display_clear(MarkeeDisplay *disp, bool stop_demo) {
     if (!disp || !disp->pixels) return;
     pthread_mutex_lock(&disp->lock);
+    stop_scroll_unlocked(disp);
     memset(disp->pixels, 0, disp->frame_bytes);
     if (stop_demo) {
         disp->demo_active = false;
@@ -66,6 +135,7 @@ void display_clear(MarkeeDisplay *disp, bool stop_demo) {
 void display_fill(MarkeeDisplay *disp, uint8_t r, uint8_t g, uint8_t b, bool stop_demo) {
     if (!disp || !disp->pixels) return;
     pthread_mutex_lock(&disp->lock);
+    stop_scroll_unlocked(disp);
     for (size_t i = 0; i < disp->frame_bytes; i += 3) {
         disp->pixels[i + 0] = r;
         disp->pixels[i + 1] = g;
@@ -87,6 +157,7 @@ MarkeeResult display_set_pixel(MarkeeDisplay *disp, int x, int y,
     }
     size_t idx = ((size_t)y * (size_t)disp->width + (size_t)x) * 3;
     pthread_mutex_lock(&disp->lock);
+    stop_scroll_unlocked(disp);
     disp->pixels[idx + 0] = r;
     disp->pixels[idx + 1] = g;
     disp->pixels[idx + 2] = b;
@@ -107,10 +178,23 @@ MarkeeResult display_get_pixel(MarkeeDisplay *disp, int x, int y,
     }
     size_t idx = ((size_t)y * (size_t)disp->width + (size_t)x) * 3;
     pthread_mutex_lock(&disp->lock);
-    *r = disp->pixels[idx + 0];
-    *g = disp->pixels[idx + 1];
-    *b = disp->pixels[idx + 2];
+    uint8_t pr = disp->pixels[idx + 0];
+    uint8_t pg = disp->pixels[idx + 1];
+    uint8_t pb = disp->pixels[idx + 2];
+    bool mono = disp->mono_enabled;
+    uint8_t tr = disp->mono_r, tg = disp->mono_g, tb = disp->mono_b;
     pthread_mutex_unlock(&disp->lock);
+
+    if (mono) {
+        pthread_once(&g_lut_once, init_srgb_lut);
+        apply_monochrome_pixel(pr, pg, pb,
+                               g_srgb_lut[tr], g_srgb_lut[tg], g_srgb_lut[tb],
+                               r, g, b);
+    } else {
+        *r = pr;
+        *g = pg;
+        *b = pb;
+    }
     return MARKEE_OK;
 }
 
@@ -120,6 +204,7 @@ MarkeeResult display_set_raw_rgb(MarkeeDisplay *disp, const uint8_t *rgb, size_t
     if (len != disp->frame_bytes) return MARKEE_ERR_WRONG_DIMENSIONS;
 
     pthread_mutex_lock(&disp->lock);
+    stop_scroll_unlocked(disp);
     memcpy(disp->pixels, rgb, disp->frame_bytes);
     if (stop_demo) {
         disp->demo_active = false;
@@ -134,7 +219,13 @@ bool display_get_raw_rgb(MarkeeDisplay *disp, uint8_t *out_rgb, size_t out_cap) 
     if (!disp || !disp->pixels || !out_rgb || out_cap < disp->frame_bytes) return false;
     pthread_mutex_lock(&disp->lock);
     memcpy(out_rgb, disp->pixels, disp->frame_bytes);
+    bool mono = disp->mono_enabled;
+    uint8_t tr = disp->mono_r, tg = disp->mono_g, tb = disp->mono_b;
     pthread_mutex_unlock(&disp->lock);
+
+    if (mono) {
+        apply_monochrome_buffer(out_rgb, disp->frame_bytes, tr, tg, tb);
+    }
     return true;
 }
 
@@ -146,7 +237,13 @@ bool display_snapshot(MarkeeDisplay *disp, uint8_t *out_rgb, size_t out_cap,
     if (out_brightness) {
         *out_brightness = disp->brightness;
     }
+    bool mono = disp->mono_enabled;
+    uint8_t tr = disp->mono_r, tg = disp->mono_g, tb = disp->mono_b;
     pthread_mutex_unlock(&disp->lock);
+
+    if (mono) {
+        apply_monochrome_buffer(out_rgb, disp->frame_bytes, tr, tg, tb);
+    }
     return true;
 }
 
@@ -166,9 +263,35 @@ uint8_t display_get_brightness(MarkeeDisplay *disp) {
     return b;
 }
 
+void display_set_monochrome(MarkeeDisplay *disp, bool enabled,
+                            uint8_t r, uint8_t g, uint8_t b) {
+    if (!disp) return;
+    pthread_mutex_lock(&disp->lock);
+    disp->mono_enabled = enabled;
+    if (enabled) {
+        disp->mono_r = r;
+        disp->mono_g = g;
+        disp->mono_b = b;
+    }
+    disp->frame_seq++;
+    pthread_mutex_unlock(&disp->lock);
+}
+
+void display_get_monochrome(MarkeeDisplay *disp, bool *enabled,
+                            uint8_t *r, uint8_t *g, uint8_t *b) {
+    if (!disp) return;
+    pthread_mutex_lock(&disp->lock);
+    if (enabled) *enabled = disp->mono_enabled;
+    if (r) *r = disp->mono_r;
+    if (g) *g = disp->mono_g;
+    if (b) *b = disp->mono_b;
+    pthread_mutex_unlock(&disp->lock);
+}
+
 void display_set_demo(MarkeeDisplay *disp, bool active) {
     if (!disp) return;
     pthread_mutex_lock(&disp->lock);
+    if (active) stop_scroll_unlocked(disp);
     disp->demo_active = active;
     pthread_mutex_unlock(&disp->lock);
 }
@@ -224,8 +347,6 @@ MarkeeResult display_load_png(MarkeeDisplay *disp, const uint8_t *png_data, size
         return MARKEE_ERR_WRONG_DIMENSIONS;
     }
 
-    /* Convert to RGBA8 so transparent PNG pixels composite cleanly onto the black LED matrix
-     * while opaque 24-bit RGB pixels remain 100% bit-exact lossless. */
     ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
     const uint8_t *rgba = (const uint8_t *)img.data;
     size_t pixel_count = (size_t)disp->width * (size_t)disp->height;
@@ -286,24 +407,7 @@ void display_free_buffer(uint8_t *buf) {
     }
 }
 
-/* --- Built-in 60 Hz startup demo animation (5x7 pixel font + 24-bit spectrum bar) --- */
-
-typedef struct {
-    char ch;
-    uint8_t rows[7]; /* 5-bit rows, MSB = bit 4 */
-} Glyph5x7;
-
-static const Glyph5x7 DEMO_FONT[] = {
-    {'M', {0x11, 0x1B, 0x15, 0x11, 0x11, 0x11, 0x11}},
-    {'A', {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}},
-    {'R', {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}},
-    {'K', {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11}},
-    {'E', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}},
-    {'B', {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E}},
-    {'U', {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}},
-    {'S', {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}},
-    {'Y', {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04}},
-};
+/* --- Built-in 60 Hz startup demo + scrolling text tick --- */
 
 static void hsv_to_rgb(float h, float s, float v, uint8_t *r, uint8_t *g, uint8_t *b) {
     h = fmodf(h, 360.0f);
@@ -334,26 +438,42 @@ static void put_px(uint8_t *buf, int w, int h, int x, int y,
     buf[idx + 2] = b;
 }
 
-static void draw_glyph(uint8_t *buf, int w, int h, char ch, int ox, int oy,
-                       uint8_t r, uint8_t g, uint8_t b) {
-    const size_t count = sizeof(DEMO_FONT) / sizeof(DEMO_FONT[0]);
-    for (size_t i = 0; i < count; i++) {
-        if (DEMO_FONT[i].ch == ch) {
-            for (int row = 0; row < 7; row++) {
-                uint8_t bits = DEMO_FONT[i].rows[row];
-                for (int col = 0; col < 5; col++) {
-                    if (bits & (1U << (4 - col))) {
-                        put_px(buf, w, h, ox + col, oy + row, r, g, b);
-                    }
-                }
-            }
-            return;
-        }
+static void tick_scroll(MarkeeDisplay *disp, double time_sec) {
+    pthread_mutex_lock(&disp->lock);
+    if (!disp->scroll.active || !disp->scroll.bg_pixels) {
+        pthread_mutex_unlock(&disp->lock);
+        return;
     }
+
+    if (!disp->scroll.has_start_time) {
+        disp->scroll.start_time = time_sec;
+        disp->scroll.has_start_time = true;
+    }
+
+    double elapsed = time_sec - disp->scroll.start_time;
+    if (elapsed < 0.0) elapsed = 0.0;
+
+    int offset = (int)floor(elapsed * disp->scroll.speed);
+    int text_w = disp->scroll.text_w > 0 ? disp->scroll.text_w : 1;
+    int span = disp->width + text_w;
+    int draw_x = ((disp->scroll.start_x - offset + text_w) % span + span) % span - text_w;
+
+    memcpy(disp->pixels, disp->scroll.bg_pixels, disp->frame_bytes);
+    MarkeeColor col = {disp->scroll.r, disp->scroll.g, disp->scroll.b};
+    draw_render_text_buf(disp->pixels, disp->width, disp->height,
+                         draw_x, disp->scroll.y,
+                         disp->scroll.text, disp->scroll.font, col);
+    disp->frame_seq++;
+    pthread_mutex_unlock(&disp->lock);
 }
 
-void display_tick_demo(MarkeeDisplay *disp, double time_sec) {
-    if (!disp || !disp->pixels || !display_is_demo_active(disp)) return;
+void display_tick(MarkeeDisplay *disp, double time_sec) {
+    if (!disp || !disp->pixels) return;
+
+    if (!display_is_demo_active(disp)) {
+        tick_scroll(disp, time_sec);
+        return;
+    }
 
     const int w = disp->width;
     const int h = disp->height;
@@ -361,7 +481,6 @@ void display_tick_demo(MarkeeDisplay *disp, double time_sec) {
     if (!buf) return;
 
     if (w >= MARKEE_DEFAULT_WIDTH && h >= MARKEE_DEFAULT_HEIGHT) {
-        /* Subtle dark ambient gradient backdrop across top/bottom rails */
         for (int x = 0; x < w; x++) {
             float hue = (float)x * 4.5f - (float)time_sec * 45.0f;
             uint8_t r, g, b;
@@ -370,11 +489,9 @@ void display_tick_demo(MarkeeDisplay *disp, double time_sec) {
             put_px(buf, w, h, x, h - 1, r, g, b);
         }
 
-        /* Center the 72x16 motif (offset 0,0 when exact default 72x16) */
         int ox = (w - MARKEE_DEFAULT_WIDTH) / 2;
         int oy = (h - MARKEE_DEFAULT_HEIGHT) / 2;
 
-        /* Pulsing BUSY-orange status indicator dot on left (4x4 rounded) */
         float pulse = 0.60f + 0.40f * sinf((float)time_sec * 3.5f);
         uint8_t or_r = (uint8_t)(255.0f * pulse);
         uint8_t or_g = (uint8_t)(92.0f * pulse);
@@ -388,13 +505,9 @@ void display_tick_demo(MarkeeDisplay *disp, double time_sec) {
             }
         }
 
-        /* Crisp "MARKEE" text in warm white */
-        const char *label = "MARKEE";
-        for (int i = 0; label[i] != '\0'; i++) {
-            draw_glyph(buf, w, h, label[i], ox + 12 + i * 6, oy + 4, 248, 244, 236);
-        }
+        MarkeeColor white = {248, 244, 236};
+        draw_render_text_buf(buf, w, h, ox + 12, oy + 4, "MARKEE", "6x8", white);
 
-        /* Live 24-bit RGB equalizer spectrum on the right side */
         for (int i = 0; i < 6; i++) {
             int bx = ox + 52 + i * 3;
             float wave = 0.5f + 0.5f * sinf((float)time_sec * (3.2f + (float)i * 0.55f) + (float)i * 1.1f);
@@ -409,7 +522,6 @@ void display_tick_demo(MarkeeDisplay *disp, double time_sec) {
             }
         }
     } else {
-        /* Compact 24-bit spectrum wave for resolutions smaller than 72x16 */
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 float hue = (float)x * (240.0f / (float)(w > 1 ? w : 1)) +
@@ -430,4 +542,8 @@ void display_tick_demo(MarkeeDisplay *disp, double time_sec) {
     }
     pthread_mutex_unlock(&disp->lock);
     free(buf);
+}
+
+void display_tick_demo(MarkeeDisplay *disp, double time_sec) {
+    display_tick(disp, time_sec);
 }
