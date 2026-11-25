@@ -115,6 +115,11 @@ void renderer_set_always_on_top(bool enabled);
  * Returns true while a drag gesture is actively moving the window. */
 bool renderer_handle_drag(const MarkeeLayout *layout);
 
+/* Poll for a clean mouse click on the LED matrix or enclosure bezel (ignoring drag gestures).
+ * Returns: 0 = no click, 1 = LED matrix click (sets *out_x, *out_y, *out_btn),
+ *          2 = bezel click (sets *out_btn). */
+int renderer_poll_click(const MarkeeLayout *layout, int *out_x, int *out_y, const char **out_btn);
+
 /* Draw one frame of the plastic-encased LED display. */
 void renderer_draw(const MarkeeLayout *layout,
                    const uint8_t *pixels,

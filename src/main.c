@@ -141,6 +141,7 @@ static void print_usage(const char *prog) {
            "  P                       Toggle pixel shape (square / circle)\n"
            "  S                       Save current frame to snapshot.png\n"
            "  T                       Toggle always-on-top window mode\n"
+           "  SPACE / ENTER           Emit an 'action' button event on GET /events\n"
            "  + / -                   Adjust brightness (+/- 10%%)\n"
            "  Q / ESC                 Quit\n\n"
            "Examples:\n"
@@ -384,6 +385,19 @@ int main(int argc, char **argv) {
         while (!WindowShouldClose() && !atomic_load(&g_quit)) {
             if (IsKeyPressed(KEY_Q)) break;
             renderer_handle_drag(&layout);
+            {
+                int cx = -1, cy = -1;
+                const char *cbtn = NULL;
+                int hit = renderer_poll_click(&layout, &cx, &cy, &cbtn);
+                if (hit == 1) {
+                    display_push_event(&display, MARKEE_EVT_CLICK, cx, cy, cbtn);
+                } else if (hit == 2) {
+                    display_push_event(&display, MARKEE_EVT_BUTTON, -1, -1, "bezel");
+                }
+            }
+            if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER)) {
+                display_push_event(&display, MARKEE_EVT_BUTTON, -1, -1, "action");
+            }
             if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1)) {
                 audio_trigger(audio, 1, 100);
             }

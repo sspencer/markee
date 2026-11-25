@@ -135,6 +135,7 @@ Available when running in GUI mode:
 | `P` | Toggle pixel shape (`square` / `circle`) |
 | `S` | Save current frame to `snapshot.png` in the working directory (includes monochrome filter if on) |
 | `T` | Toggle always-on-top window mode |
+| `SPACE` / `ENTER` | Emit an `action` button event on `GET /events` |
 | `+` (`=`) / `-` | Increase or decrease simulated brightness by 10% (keypad `+`/`-` also work) |
 | `Q` / `ESC` | Quit |
 
@@ -158,6 +159,7 @@ Available when running in GUI mode:
 | `GET` `POST` `PUT` `DELETE` | [`/monochrome`](docs/API.md#post-monochrome) | Read or toggle the non-destructive BT.709 tint filter |
 | `POST` | [`/demo`](docs/API.md#post-demo) | Turn the built-in demo animation on or off |
 | `GET` `POST` | [`/alert`](docs/API.md#alert-sounds) | List or play the 3 gentle alert sounds (`POST /alert/1`..`3` or `ding`/`chime`/`bell`) |
+| `GET` `POST` | [`/events`](docs/API.md#get-events) | Poll or stream (SSE) LED clicks, bezel/key button presses, and frame updates |
 
 ### More `curl` examples
 

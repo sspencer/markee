@@ -96,6 +96,8 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | | `POST` | [`/demo`](#post-demo) | Turn the built-in demo animation on or off |
 | **Alerts** | `GET` | [`/alert`](#get-alert) (`/alerts`, `/api/alert`, `/api/alerts`) | List built-in alert sounds and audio status |
 | | `POST` | [`/alert`](#post-alert), `/alert/<id\|name>` (`/api/alert`) | Play one of the 3 gentle alert sounds |
+| **Events** | `GET` | [`/events`](#get-events) (`/api/events`) | Poll or stream (SSE) display click, bezel button, and frame update events |
+| | `POST` | [`/events`](#get-events) (`/api/events`) | Inject a click or button event (useful for automation & headless testing) |
 | **CORS** | `OPTIONS` | `*` | CORS preflight (`204 No Content`) |
 
 ---
@@ -794,6 +796,39 @@ curl -X POST http://127.0.0.1:8080/alert -d '{"sound":"bell","volume":60}'
 | `404 Not Found` | Unknown sound in path (`/alert/99`, `/alert/siren`) |
 | `400 Bad Request` | Invalid `sound`/`id` parameter or body, or `volume` outside `0..100` |
 | `405 Method Not Allowed` | Wrong HTTP method (e.g., `GET /alert/1` or `DELETE /alert`) |
+
+---
+
+## Events
+
+### GET /events
+
+**Methods:** `GET`, `POST` · **Alias:** `/api/events`
+
+Exposes a 64-entry ring buffer of interactive GUI clicks (`click` with LED pixel `x`, `y` and `left`/`right`), bezel taps or `Space`/`Enter` presses (`button`), and API framebuffer updates (`frame`).
+
+- **JSON polling (default):** `GET /events?since=<id>&wait=<ms>` (`wait` `0..5000` ms enables long-polling).
+- **Server-Sent Events (SSE):** send `Accept: text/event-stream` or `?stream=1` (optional `&max=<n>` closes after `n` events).
+
+```bash
+# Poll recent events
+curl "http://127.0.0.1:8080/events?since=0"
+
+# Stream live events via SSE
+curl -N "http://127.0.0.1:8080/events?stream=1"
+```
+
+```json
+{
+  "last_id": 2,
+  "events": [
+    {"id":1,"type":"click","x":12,"y":7,"detail":"left"},
+    {"id":2,"type":"button","detail":"bezel"}
+  ]
+}
+```
+
+`POST /events` accepts `{"type":"button"|"click","x":12,"y":7,"detail":"action"}` to inject a synthetic event for scripts or headless testing.
 
 ---
 

@@ -1161,6 +1161,7 @@ bool draw_exec_json(MarkeeDisplay *disp, const char *json_body, size_t json_len,
         disp->demo_active = false;
         disp->frames_received++;
         disp->frame_seq++;
+        display_push_event_unlocked(disp, MARKEE_EVT_FRAME, -1, -1, "draw");
     } else {
         staged_gifs_clear(&staged_gifs);
     }

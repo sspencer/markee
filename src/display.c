@@ -2,10 +2,12 @@
 
 #include "display.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "draw.h"
 #include "raylib.h"
@@ -116,7 +118,15 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
         free(gif_bg_pixels);
         return false;
     }
+    if (pthread_cond_init(&disp->event_cond, NULL) != 0) {
+        pthread_mutex_destroy(&disp->lock);
+        free(pixels);
+        free(bg_pixels);
+        free(gif_bg_pixels);
+        return false;
+    }
     if (pthread_mutex_init(&disp->png_lock, NULL) != 0) {
+        pthread_cond_destroy(&disp->event_cond);
         pthread_mutex_destroy(&disp->lock);
         free(pixels);
         free(bg_pixels);
@@ -132,13 +142,16 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     disp->gif.bg_pixels = gif_bg_pixels;
     disp->brightness = 100;
     disp->demo_active = start_demo;
+    disp->next_event_id = 1;
     return true;
 }
 
 void display_destroy(MarkeeDisplay *disp) {
     if (!disp) return;
+    display_signal_shutdown(disp);
     display_stop_gif_unlocked(disp);
     pthread_mutex_destroy(&disp->png_lock);
+    pthread_cond_destroy(&disp->event_cond);
     pthread_mutex_destroy(&disp->lock);
     free(disp->pixels);
     free(disp->scroll.bg_pixels);
@@ -146,6 +159,108 @@ void display_destroy(MarkeeDisplay *disp) {
     disp->pixels = NULL;
     disp->scroll.bg_pixels = NULL;
     disp->gif.bg_pixels = NULL;
+}
+
+const char *display_event_type_name(MarkeeEventType type) {
+    switch (type) {
+        case MARKEE_EVT_CLICK:  return "click";
+        case MARKEE_EVT_BUTTON: return "button";
+        case MARKEE_EVT_FRAME:  return "frame";
+        default:                return "unknown";
+    }
+}
+
+void display_push_event_unlocked(MarkeeDisplay *disp, MarkeeEventType type,
+                                 int x, int y, const char *detail) {
+    if (!disp) return;
+    size_t slot;
+    if (disp->event_count < MARKEE_EVENT_RING_CAP) {
+        slot = (disp->event_head + disp->event_count) % MARKEE_EVENT_RING_CAP;
+        disp->event_count++;
+    } else {
+        slot = disp->event_head;
+        disp->event_head = (disp->event_head + 1) % MARKEE_EVENT_RING_CAP;
+    }
+    MarkeeEvent *ev = &disp->events[slot];
+    ev->id = disp->next_event_id++;
+    ev->type = type;
+    ev->x = x;
+    ev->y = y;
+    snprintf(ev->detail, sizeof(ev->detail), "%s", detail ? detail : "");
+    pthread_cond_broadcast(&disp->event_cond);
+}
+
+void display_push_event(MarkeeDisplay *disp, MarkeeEventType type,
+                        int x, int y, const char *detail) {
+    if (!disp) return;
+    pthread_mutex_lock(&disp->lock);
+    display_push_event_unlocked(disp, type, x, y, detail);
+    pthread_mutex_unlock(&disp->lock);
+}
+
+uint64_t display_get_last_event_id(MarkeeDisplay *disp) {
+    if (!disp) return 0;
+    pthread_mutex_lock(&disp->lock);
+    uint64_t id = disp->next_event_id > 0 ? disp->next_event_id - 1 : 0;
+    pthread_mutex_unlock(&disp->lock);
+    return id;
+}
+
+static size_t collect_events_unlocked(const MarkeeDisplay *disp, uint64_t since_id,
+                                      MarkeeEvent *out, size_t max_out) {
+    size_t n = 0;
+    for (size_t i = 0; i < disp->event_count && n < max_out; i++) {
+        size_t idx = (disp->event_head + i) % MARKEE_EVENT_RING_CAP;
+        if (disp->events[idx].id > since_id) {
+            out[n++] = disp->events[idx];
+        }
+    }
+    return n;
+}
+
+size_t display_get_events_since(MarkeeDisplay *disp, uint64_t since_id,
+                                MarkeeEvent *out, size_t max_out) {
+    if (!disp || !out || max_out == 0) return 0;
+    pthread_mutex_lock(&disp->lock);
+    size_t n = collect_events_unlocked(disp, since_id, out, max_out);
+    pthread_mutex_unlock(&disp->lock);
+    return n;
+}
+
+size_t display_wait_for_events(MarkeeDisplay *disp, uint64_t since_id, int timeout_ms,
+                               MarkeeEvent *out, size_t max_out) {
+    if (!disp || !out || max_out == 0) return 0;
+    pthread_mutex_lock(&disp->lock);
+    size_t n = collect_events_unlocked(disp, since_id, out, max_out);
+    if (n == 0 && timeout_ms > 0 && !disp->shutting_down) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += timeout_ms / 1000;
+        ts.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+        if (ts.tv_nsec >= 1000000000L) {
+            ts.tv_sec += 1;
+            ts.tv_nsec -= 1000000000L;
+        }
+        while (!disp->shutting_down) {
+            n = collect_events_unlocked(disp, since_id, out, max_out);
+            if (n > 0) break;
+            int rc = pthread_cond_timedwait(&disp->event_cond, &disp->lock, &ts);
+            if (rc == ETIMEDOUT) {
+                n = collect_events_unlocked(disp, since_id, out, max_out);
+                break;
+            }
+        }
+    }
+    pthread_mutex_unlock(&disp->lock);
+    return n;
+}
+
+void display_signal_shutdown(MarkeeDisplay *disp) {
+    if (!disp) return;
+    pthread_mutex_lock(&disp->lock);
+    disp->shutting_down = true;
+    pthread_cond_broadcast(&disp->event_cond);
+    pthread_mutex_unlock(&disp->lock);
 }
 
 void display_clear(MarkeeDisplay *disp, bool stop_demo) {
@@ -157,6 +272,7 @@ void display_clear(MarkeeDisplay *disp, bool stop_demo) {
     if (stop_demo) {
         disp->demo_active = false;
         disp->frames_received++;
+        display_push_event_unlocked(disp, MARKEE_EVT_FRAME, -1, -1, "clear");
     }
     disp->frame_seq++;
     pthread_mutex_unlock(&disp->lock);
@@ -175,6 +291,7 @@ void display_fill(MarkeeDisplay *disp, uint8_t r, uint8_t g, uint8_t b, bool sto
     if (stop_demo) {
         disp->demo_active = false;
         disp->frames_received++;
+        display_push_event_unlocked(disp, MARKEE_EVT_FRAME, -1, -1, "fill");
     }
     disp->frame_seq++;
     pthread_mutex_unlock(&disp->lock);
@@ -196,6 +313,7 @@ MarkeeResult display_set_pixel(MarkeeDisplay *disp, int x, int y,
     if (stop_demo) {
         disp->demo_active = false;
         disp->frames_received++;
+        display_push_event_unlocked(disp, MARKEE_EVT_FRAME, x, y, "pixel");
     }
     disp->frame_seq++;
     pthread_mutex_unlock(&disp->lock);
@@ -242,6 +360,7 @@ MarkeeResult display_set_raw_rgb(MarkeeDisplay *disp, const uint8_t *rgb, size_t
     if (stop_demo) {
         disp->demo_active = false;
         disp->frames_received++;
+        display_push_event_unlocked(disp, MARKEE_EVT_FRAME, -1, -1, "frame");
     }
     disp->frame_seq++;
     pthread_mutex_unlock(&disp->lock);
@@ -549,6 +668,7 @@ MarkeeResult display_load_gif(MarkeeDisplay *disp, const uint8_t *gif_data, size
     disp->demo_active = false;
     disp->frames_received++;
     disp->frame_seq++;
+    display_push_event_unlocked(disp, MARKEE_EVT_FRAME, -1, -1, "animate");
     pthread_mutex_unlock(&disp->lock);
 
     if (out_status) *out_status = status;

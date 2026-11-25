@@ -10,7 +10,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 - [x] **Borderless floating widget (`--borderless`):** Hide the OS titlebar and render only the molded enclosure with a transparent window background (`FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_TRANSPARENT`) plus click-and-drag repositioning.
 - [x] **Window placement & persistence (`--position X,Y`, `--corner top-right|bottom-right|...`):** Park the bar in a predictable corner on launch (position persistence covered with config file support).
 - [x] **Enclosure color themes (`--case white|charcoal|orange|retro`):** Support alternate shell finishes (e.g., matte black, classic off-white, bright accent) via CLI flag or hotkey (`K`).
-- [ ] **Interactive bezel / click events:** Optional virtual hardware button(s) on the enclosure (or clicking the display) exposed over HTTP (`GET /events`) so client applets can react to taps (acknowledge alerts, pause a Pomodoro timer, cycle pages).
+- [x] **Interactive bezel / click events:** Clicks on the LED matrix (with exact pixel `x,y`), clicks on the bezel, and `Space`/`Enter` presses emit events over `GET /events`.
 - [ ] **Idle dimming / night mode:** Optional auto-dim after N minutes of no API updates, waking smoothly on the next request.
 
 ---
@@ -34,7 +34,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 
 - [ ] **Built-in Web Playground (`GET /ui`):** Serve a self-contained single-page HTML/JS studio from `markee` to preview the display live, experiment with `/draw` JSON, drag-and-drop PNGs/GIFs, test alert sounds, and tweak brightness/monochrome.
 - [ ] **Client helper CLI (or subcommands):** Quick commands like `markee say "BUILD OK" --color green --chime`, `markee gif cat.gif --fill white`, or `markee timer 25m` so shell scripts don't need hand-built JSON, base64, and `curl` flags.
-- [ ] **Live event stream (`GET /events` via SSE or WebSocket):** Stream frame updates, animation state changes, or button clicks to remote mirrors and dashboards without polling.
+- [x] **Live event stream (`GET /events` via SSE or WebSocket):** JSON polling (`?since=`, `?wait=`) and Server-Sent Events (`?stream=1` / `Accept: text/event-stream`) stream frame updates, LED clicks, and bezel button presses.
 - [ ] **Optional API token auth (`--token` / `MARKEE_TOKEN`):** Allow safe LAN binding (`--host 0.0.0.0`) with Bearer token protection.
 - [ ] **Custom alert melodies & audio clips:** Allow simple note-sequence alerts (e.g., `"C5:120,E5:120,G5:240"`) or short uploaded WAV/PCM sounds in `POST /alert`.
 - [ ] **GIF recording (`POST /record` or hotkey `R`):** Capture a live sequence of displayed frames directly to an animated `.gif` for sharing demos, docs, and bug reports.

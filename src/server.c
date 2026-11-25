@@ -541,6 +541,8 @@ static const RouteMethods KNOWN_ROUTES[] = {
     {"/api/alert",  "GET, POST, OPTIONS"},
     {"/alerts",     "GET, OPTIONS"},
     {"/api/alerts", "GET, OPTIONS"},
+    {"/events",     "GET, POST, OPTIONS"},
+    {"/api/events", "GET, POST, OPTIONS"},
 };
 
 /* If path is "/alert/<seg>" or "/api/alert/<seg>" (single segment), return pointer to <seg>. */
@@ -603,6 +605,23 @@ static int parse_alert_json_value(const JsonValue *v) {
         return audio_parse_alert_id(v->u.sval);
     }
     return 0;
+}
+
+static int format_event_json(const MarkeeEvent *ev, char *out, size_t out_size) {
+    char esc[96];
+    json_escape(ev->detail, esc, sizeof(esc));
+    if (ev->x >= 0 && ev->y >= 0) {
+        return snprintf(out, out_size,
+                        "{\"id\":%llu,\"type\":\"%s\",\"x\":%d,\"y\":%d,\"detail\":\"%s\"}",
+                        (unsigned long long)ev->id,
+                        display_event_type_name(ev->type),
+                        ev->x, ev->y, esc);
+    }
+    return snprintf(out, out_size,
+                    "{\"id\":%llu,\"type\":\"%s\",\"detail\":\"%s\"}",
+                    (unsigned long long)ev->id,
+                    display_event_type_name(ev->type),
+                    esc);
 }
 
 static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
@@ -1269,6 +1288,145 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         return;
     }
 
+    /* GET /events or /api/events (JSON polling, long-poll ?wait=ms, or SSE ?stream=1 / Accept: text/event-stream) */
+    if (strcmp(req->method, "GET") == 0 &&
+        (strcmp(req->path, "/events") == 0 || strcmp(req->path, "/api/events") == 0)) {
+        uint64_t since_id = 0;
+        char val[32];
+        if (query_get(req->query, "since", val, sizeof(val))) {
+            char *end = NULL;
+            unsigned long long v = strtoull(val, &end, 10);
+            if (end == val || *end != '\0') {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"since must be a non-negative integer\"}", ka);
+                return;
+            }
+            since_id = (uint64_t)v;
+        }
+
+        bool want_sse = contains_ci(req->accept, "text/event-stream") ||
+                        (query_get(req->query, "stream", val, sizeof(val)) &&
+                         strcmp(val, "0") != 0 && strcasecmp(val, "false") != 0) ||
+                        (query_get(req->query, "format", val, sizeof(val)) &&
+                         strcasecmp(val, "sse") == 0);
+
+        if (want_sse) {
+            int max_events = 0; /* 0 = unlimited */
+            if (query_get(req->query, "max", val, sizeof(val))) {
+                if (!parse_int_param(val, &max_events) || max_events < 0) {
+                    send_json(fd, 400, "Bad Request",
+                              "{\"error\":\"max must be a non-negative integer\"}", ka);
+                    return;
+                }
+            }
+            const char *sse_hdr =
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/event-stream\r\n"
+                "Cache-Control: no-cache\r\n"
+                "Access-Control-Allow-Origin: *\r\n"
+                "Connection: close\r\n"
+                "\r\n";
+            if (!send_all(fd, sse_hdr, strlen(sse_hdr))) return;
+
+            int sent = 0;
+            while (atomic_load(&srv->running)) {
+                MarkeeEvent evs[16];
+                size_t n = display_wait_for_events(disp, since_id, 500, evs, 16);
+                if (!atomic_load(&srv->running)) break;
+                if (n == 0) {
+                    const char *ping = ": keepalive\n\n";
+                    if (!send_all(fd, ping, strlen(ping))) break;
+                    continue;
+                }
+                for (size_t i = 0; i < n; i++) {
+                    char ev_json[256];
+                    char chunk[384];
+                    format_event_json(&evs[i], ev_json, sizeof(ev_json));
+                    int clen = snprintf(chunk, sizeof(chunk),
+                                        "id: %llu\nevent: %s\ndata: %s\n\n",
+                                        (unsigned long long)evs[i].id,
+                                        display_event_type_name(evs[i].type),
+                                        ev_json);
+                    if (clen <= 0 || !send_all(fd, chunk, (size_t)clen)) return;
+                    since_id = evs[i].id;
+                    sent++;
+                    if (max_events > 0 && sent >= max_events) return;
+                }
+            }
+            return;
+        }
+
+        int wait_ms = 0;
+        if (query_get(req->query, "wait", val, sizeof(val))) {
+            if (!parse_int_param(val, &wait_ms) || wait_ms < 0 || wait_ms > 5000) {
+                send_json(fd, 400, "Bad Request",
+                          "{\"error\":\"wait must be an integer 0..5000 (ms)\"}", ka);
+                return;
+            }
+        }
+
+        MarkeeEvent evs[MARKEE_EVENT_RING_CAP];
+        size_t n = (wait_ms > 0)
+                       ? display_wait_for_events(disp, since_id, wait_ms, evs, MARKEE_EVENT_RING_CAP)
+                       : display_get_events_since(disp, since_id, evs, MARKEE_EVENT_RING_CAP);
+        uint64_t last_id = display_get_last_event_id(disp);
+
+        size_t cap = 128 + n * 160;
+        char *buf = malloc(cap);
+        if (!buf) {
+            send_json(fd, 500, "Internal Server Error", "{\"error\":\"out of memory\"}", ka);
+            return;
+        }
+        size_t off = (size_t)snprintf(buf, cap, "{\"last_id\":%llu,\"events\":[",
+                                      (unsigned long long)last_id);
+        for (size_t i = 0; i < n; i++) {
+            char ev_json[256];
+            int elen = format_event_json(&evs[i], ev_json, sizeof(ev_json));
+            if (elen > 0 && off + (size_t)elen + 8 < cap) {
+                if (i > 0) buf[off++] = ',';
+                memcpy(buf + off, ev_json, (size_t)elen);
+                off += (size_t)elen;
+            }
+        }
+        if (off + 3 < cap) {
+            buf[off++] = ']';
+            buf[off++] = '}';
+            buf[off] = '\0';
+        }
+        send_json(fd, 200, "OK", buf, ka);
+        free(buf);
+        return;
+    }
+
+    /* POST /events or /api/events: inject a button/click event (useful for automation & headless tests) */
+    if (strcmp(req->method, "POST") == 0 &&
+        (strcmp(req->path, "/events") == 0 || strcmp(req->path, "/api/events") == 0)) {
+        MarkeeEventType etype = MARKEE_EVT_BUTTON;
+        int ex = -1, ey = -1;
+        char detail[32] = "action";
+
+        JsonValue *bj = parse_body_json(req->body, req->body_len);
+        if (bj && bj->type == JSON_OBJECT) {
+            const char *ts = json_as_string(json_obj_get(bj, "type"));
+            if (ts && strcasecmp(ts, "click") == 0) {
+                etype = MARKEE_EVT_CLICK;
+                snprintf(detail, sizeof(detail), "left");
+            }
+            json_member_int(bj, "x", &ex);
+            json_member_int(bj, "y", &ey);
+            const char *ds = json_as_string(json_obj_get(bj, "detail"));
+            if (ds && *ds) snprintf(detail, sizeof(detail), "%s", ds);
+        }
+        json_free(bj);
+
+        display_push_event(disp, etype, ex, ey, detail);
+        char json[128];
+        snprintf(json, sizeof(json), "{\"ok\":true,\"id\":%llu}",
+                 (unsigned long long)display_get_last_event_id(disp));
+        send_json(fd, 200, "OK", json, ka);
+        return;
+    }
+
     const char *allow = route_allow(req->path);
     if (allow) {
         char hdr[128];
@@ -1326,9 +1484,14 @@ static void *client_thread_main(void *arg) {
         }
 
         handle_request(srv, fd, &req);
+        bool sse_close = (strcmp(req.method, "GET") == 0 &&
+                          (strcmp(req.path, "/events") == 0 || strcmp(req.path, "/api/events") == 0) &&
+                          (contains_ci(req.accept, "text/event-stream") ||
+                           strstr(req.query, "stream=") != NULL ||
+                           strstr(req.query, "format=sse") != NULL));
         free(req.body);
 
-        if (!req.keep_alive) {
+        if (!req.keep_alive || sse_close) {
             break;
         }
     }
@@ -1473,6 +1636,9 @@ uint16_t server_get_port(const MarkeeServer *srv) {
 void server_stop(MarkeeServer *srv) {
     if (!srv) return;
     atomic_store(&srv->running, false);
+    if (srv->disp) {
+        display_signal_shutdown(srv->disp);
+    }
     if (srv->listen_fd >= 0) {
         shutdown(srv->listen_fd, SHUT_RDWR);
         close(srv->listen_fd);

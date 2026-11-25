@@ -290,6 +290,73 @@ bool renderer_handle_drag(const MarkeeLayout *L) {
     return dragging;
 }
 
+int renderer_poll_click(const MarkeeLayout *L, int *out_x, int *out_y, const char **out_btn) {
+    static bool left_down = false;
+    static Vector2 left_start = {0.0f, 0.0f};
+    static bool right_down = false;
+    static Vector2 right_start = {0.0f, 0.0f};
+
+    if (out_x) *out_x = -1;
+    if (out_y) *out_y = -1;
+    if (out_btn) *out_btn = "";
+    if (!L) return 0;
+
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        left_down = true;
+        left_start = GetMousePosition();
+    }
+    if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+        right_down = true;
+        right_start = GetMousePosition();
+    }
+
+    bool clicked = false;
+    Vector2 mp = {0.0f, 0.0f};
+    const char *btn = "left";
+
+    if (left_down && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        left_down = false;
+        mp = GetMousePosition();
+        float dx = mp.x - left_start.x;
+        float dy = mp.y - left_start.y;
+        if (dx * dx + dy * dy <= 36.0f) {
+            clicked = true;
+            btn = "left";
+        }
+    } else if (right_down && IsMouseButtonReleased(MOUSE_BUTTON_RIGHT)) {
+        right_down = false;
+        mp = GetMousePosition();
+        float dx = mp.x - right_start.x;
+        float dy = mp.y - right_start.y;
+        if (dx * dx + dy * dy <= 36.0f) {
+            clicked = true;
+            btn = "right";
+        }
+    }
+
+    if (!clicked) return 0;
+    if (out_btn) *out_btn = btn;
+
+    Rectangle matrix = {L->matrix_x, L->matrix_y, L->matrix_w, L->matrix_h};
+    if (CheckCollisionPointRec(mp, matrix) && L->cell_pitch > 0.0f) {
+        int gx = (int)floorf((mp.x - L->matrix_x) / L->cell_pitch);
+        int gy = (int)floorf((mp.y - L->matrix_y) / L->cell_pitch);
+        if (gx < 0) gx = 0;
+        if (gx >= L->width) gx = L->width - 1;
+        if (gy < 0) gy = 0;
+        if (gy >= L->height) gy = L->height - 1;
+        if (out_x) *out_x = gx;
+        if (out_y) *out_y = gy;
+        return 1;
+    }
+
+    Rectangle body = {L->body_x, L->body_y, L->body_w, L->body_h};
+    if (CheckCollisionPointRec(mp, body)) {
+        return 2;
+    }
+    return 0;
+}
+
 static uint8_t clamp_u8(int v) {
     if (v < 0) return 0;
     if (v > 255) return 255;

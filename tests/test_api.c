@@ -1920,6 +1920,58 @@ static void test_draw_image_op(void) {
     printf("[PASS] POST /draw 'image' op (PNG + GIF, alpha/fill, x/y clipping, loop, multi-GIF + scroll, atomic)\n");
 }
 
+static void test_events_api(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, false));
+    MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+
+    /* 1. Trigger a frame write + simulated click & button events */
+    HttpResp r = do_request(port, "POST", "/fill?color=amber", NULL, NULL, 0);
+    assert(r.status == 200);
+    free(r.body);
+
+    display_push_event(&disp, MARKEE_EVT_CLICK, 12, 7, "left");
+
+    const char *btn_body = "{\"type\":\"button\",\"detail\":\"bezel\"}";
+    r = do_request(port, "POST", "/events", "application/json", btn_body, strlen(btn_body));
+    assert(r.status == 200);
+    free(r.body);
+
+    /* 2. GET /events returns all 3 events in order */
+    r = do_request(port, "GET", "/events", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"type\":\"frame\"") != NULL);
+    assert(strstr((char *)r.body, "\"type\":\"click\",\"x\":12,\"y\":7,\"detail\":\"left\"") != NULL);
+    assert(strstr((char *)r.body, "\"type\":\"button\",\"detail\":\"bezel\"") != NULL);
+    free(r.body);
+
+    /* 3. GET /events?since=2 returns only event #3 */
+    r = do_request(port, "GET", "/events?since=2", NULL, NULL, 0);
+    assert(r.status == 200);
+    assert(strstr((char *)r.body, "\"type\":\"click\"") == NULL);
+    assert(strstr((char *)r.body, "\"type\":\"button\",\"detail\":\"bezel\"") != NULL);
+    free(r.body);
+
+    /* 4. SSE streaming mode (?stream=1&max=2) emits text/event-stream chunks and closes */
+    const char *sse_req = "GET /events?stream=1&since=1&max=2 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+    char *raw = raw_exchange(port, sse_req, strlen(sse_req));
+    assert(strstr(raw, "Content-Type: text/event-stream") != NULL);
+    assert(strstr(raw, "event: click\ndata: ") != NULL);
+    assert(strstr(raw, "event: button\ndata: ") != NULL);
+    free(raw);
+
+    /* 5. Invalid params -> 400 */
+    r = do_request(port, "GET", "/events?wait=99999", NULL, NULL, 0);
+    assert(r.status == 400);
+    free(r.body);
+
+    server_stop(srv);
+    display_destroy(&disp);
+    printf("[PASS] /events API (click/button/frame ring buffer, JSON polling, ?since, SSE stream)\n");
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     SetTraceLogLevel(LOG_ERROR);
@@ -1937,6 +1989,7 @@ int main(void) {
     test_gif_decoder_crop_center_and_features();
     test_animate_http_api();
     test_draw_image_op();
+    test_events_api();
 
     printf("\nAll markee tests passed!\n");
     return 0;

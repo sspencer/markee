@@ -34,6 +34,22 @@ typedef struct {
 } MarkeeScrollState;
 
 #define MARKEE_MAX_GIF_LAYERS 8
+#define MARKEE_EVENT_RING_CAP 64
+
+typedef enum {
+    MARKEE_EVT_NONE = 0,
+    MARKEE_EVT_CLICK,
+    MARKEE_EVT_BUTTON,
+    MARKEE_EVT_FRAME
+} MarkeeEventType;
+
+typedef struct {
+    uint64_t id;
+    MarkeeEventType type;
+    int x;
+    int y;
+    char detail[32];
+} MarkeeEvent;
 
 typedef struct {
     MarkeeGif *gif;
@@ -67,6 +83,7 @@ typedef struct {
 
 typedef struct {
     pthread_mutex_t lock;
+    pthread_cond_t event_cond;
     pthread_mutex_t png_lock;
     int width;
     int height;
@@ -82,6 +99,11 @@ typedef struct {
     uint64_t frame_seq;
     MarkeeScrollState scroll;
     MarkeeGifAnimState gif;
+    MarkeeEvent events[MARKEE_EVENT_RING_CAP];
+    size_t event_head;
+    size_t event_count;
+    uint64_t next_event_id;
+    bool shutting_down;
 } MarkeeDisplay;
 
 /* Initialize and destroy display state for the given resolution (width x height). */
@@ -137,6 +159,19 @@ void display_stop_gif(MarkeeDisplay *disp);
 void display_stop_gif_unlocked(MarkeeDisplay *disp);
 bool display_get_gif_status(MarkeeDisplay *disp, MarkeeGifStatus *out_status);
 bool display_is_gif_active(MarkeeDisplay *disp);
+
+/* Event ring buffer & long-poll / SSE wakeup helpers. */
+const char *display_event_type_name(MarkeeEventType type);
+void display_push_event_unlocked(MarkeeDisplay *disp, MarkeeEventType type,
+                                 int x, int y, const char *detail);
+void display_push_event(MarkeeDisplay *disp, MarkeeEventType type,
+                        int x, int y, const char *detail);
+uint64_t display_get_last_event_id(MarkeeDisplay *disp);
+size_t display_get_events_since(MarkeeDisplay *disp, uint64_t since_id,
+                                MarkeeEvent *out, size_t max_out);
+size_t display_wait_for_events(MarkeeDisplay *disp, uint64_t since_id, int timeout_ms,
+                               MarkeeEvent *out, size_t max_out);
+void display_signal_shutdown(MarkeeDisplay *disp);
 
 /* Advance 60 Hz animations (startup demo, active GIF animation, or active scrolling text). */
 void display_tick(MarkeeDisplay *disp, double time_sec);
