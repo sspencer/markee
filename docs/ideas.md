@@ -20,8 +20,8 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 - [x] **Transient notifications with TTL (`POST /notify` or `?ttl=<sec>`):** Temporarily display an alert (banner JSON, plain text, or `/draw` batch + optional alert sound) for `ttl` seconds and automatically restore the previous display state (pixels, demo, scroller, or GIFs). `GET /notify` inspects remaining time; `DELETE /notify` dismisses early.
 - [x] **Clipped scrolling regions (`clip: [x, y, w, h]` on scrolling `text`):** Constrain static and marquee scrolling text to a sub-rectangle so an animated icon/GIF on the left (`x: 0..15`) and a scrolling ticker on the right (`x: 18..71`) never overlap.
 - [x] **Text alignment & proportional font option (`align: "left"|"center"|"right"`, `font: "prop"`):** Align text automatically within the screen, `w` box, or `clip` region, and use `"prop"` (`"proportional"`/`"compact"`) for tight variable-width glyphs.
-- [ ] **Built-in autonomous widgets (`clock`, `countdown`, `progress`, `sparkline`):**
-  - Server-side live `clock` and `countdown` timer ops that tick smoothly at 60 Hz without a background client polling every second (great for focus/Pomodoro timers).
+- [x] **Built-in autonomous widgets (`clock`, `countdown`, `progress`, `sparkline`):**
+  - Server-side live `clock` and `countdown` timer ops (with optional bottom progress bar and completion alert sound) tick autonomously at 60 Hz.
   - Compact `progress` bar and `sparkline` primitives for dashboards.
 - [ ] **Scene transitions (`transition: "fade"|"slide-left"|"slide-up"|"wipe"`):** Brief 150–300 ms transitions when switching screens or clearing notifications.
 - [ ] **Animation playback controls:** Speed multiplier (`?speed=1.5` / `"speed"` on animated GIFs), pause/resume endpoint, and optional scaling modes (`?fit=crop|contain|stretch`) on `/animate`.

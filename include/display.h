@@ -83,6 +83,32 @@ typedef struct {
     uint8_t fill_b;
 } MarkeeGifStatus;
 
+typedef enum {
+    MARKEE_WIDGET_NONE = 0,
+    MARKEE_WIDGET_CLOCK,
+    MARKEE_WIDGET_COUNTDOWN
+} MarkeeWidgetType;
+
+typedef struct {
+    MarkeeWidgetType type;
+    int x, y;
+    bool has_x;
+    int align;          /* 0=left, 1=center, 2=right */
+    char font[16];
+    char format[16];    /* clock: "24h", "24hm", "12h", "12hm" */
+    uint8_t r, g, b;
+    uint8_t done_r, done_g, done_b;
+    char done_text[32];
+    double duration_sec;
+    bool has_start_time;
+    double start_time;
+    bool show_bar;
+    uint8_t bar_r, bar_g, bar_b;
+    int done_sound_id;  /* 0=none, 1..3=alert sound on countdown finish */
+    bool done_fired;
+    uint8_t *bg_pixels; /* background snapshot underneath live widget */
+} MarkeeWidgetState;
+
 typedef struct {
     bool active;
     double duration_sec;
@@ -91,9 +117,11 @@ typedef struct {
     uint8_t *saved_pixels;
     uint8_t *saved_scroll_bg;
     uint8_t *saved_gif_bg;
+    uint8_t *saved_widget_bg;
     bool saved_demo_active;
     MarkeeScrollState saved_scroll;
     MarkeeGifAnimState saved_gif;
+    MarkeeWidgetState saved_widget;
 } MarkeeNotifyState;
 
 typedef struct {
@@ -114,6 +142,8 @@ typedef struct {
     uint64_t frame_seq;
     MarkeeScrollState scroll;
     MarkeeGifAnimState gif;
+    MarkeeWidgetState widget;
+    int pending_alert_sound;            /* 0=none, 1..3=pending sound from autonomous widget */
     MarkeeNotifyState notify;
     MarkeeEvent events[MARKEE_EVENT_RING_CAP];
     size_t event_head;
@@ -207,7 +237,10 @@ size_t display_wait_for_events(MarkeeDisplay *disp, uint64_t since_id, int timeo
                                MarkeeEvent *out, size_t max_out);
 void display_signal_shutdown(MarkeeDisplay *disp);
 
-/* Advance 60 Hz animations (startup demo, active GIF animation, or active scrolling text). */
+/* Drain an optional alert sound ID (1..3, or 0 if none) queued by a finished countdown widget. */
+int display_take_pending_alert(MarkeeDisplay *disp);
+
+/* Advance 60 Hz animations (startup demo, active GIF animation, widget, or scrolling text). */
 void display_tick(MarkeeDisplay *disp, double time_sec);
 
 /* Backward-compatible alias for display_tick(). */

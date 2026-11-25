@@ -410,6 +410,46 @@ Draws a PNG or GIF (`GIF87a`/`GIF89a`, static or animated) placed at `(x, y)` (t
 
 **Validation errors (`400`):** missing/empty `data`, invalid base64, unsupported or corrupt PNG/GIF data, negative or non-integer `loop` (for GIFs), invalid `fill` color, or more than 8 animated GIF `image` ops in a single batch.
 
+#### `progress`
+
+Draws a horizontal progress bar.
+
+| Field | Default | Description |
+|---|---|---|
+| `value` | **required** | Current value (`0.0..1.0`, or `0..100` if `value > 1` and `max` is omitted) |
+| `max` | `1.0` | Maximum value |
+| `x`, `y`, `w`, `h` | `0`, `H-4`, `W`, `4` | Bar bounding box |
+| `color` | `#00dc5a` | Filled bar color |
+| `bg` | `#181a20` | Track color (`"none"` or `null` to omit) |
+| `border` | none | Optional 1-px outer border color |
+
+#### `sparkline`
+
+Plots a compact numeric series (`1..256` values) as a polyline (`"style": "line"`, default) or vertical bars (`"style": "bars"`).
+
+| Field | Default | Description |
+|---|---|---|
+| `values` | **required** | Array of 1–256 numbers |
+| `x`, `y`, `w`, `h` | `0`, `0`, `W`, `H` | Plot bounding box |
+| `min`, `max` | auto | Optional Y-axis bounds (defaults to data min/max) |
+| `color` | `#00dcff` | Line or bar color |
+| `fill` | none | Optional area fill under the line |
+| `style` | `"line"` | `"line"` or `"bars"` |
+
+#### `clock` & `countdown` (autonomous widgets)
+
+Live widgets that update automatically at 60 Hz without client polling.
+
+- **`clock`:** `format` (`"24h"` `%H:%M:%S`, `"24hm"` `%H:%M`, `"12h"`, `"12hm"`), `x`, `y`, `font`, `color`, `align` (defaults to centered when `x` omitted).
+- **`countdown`:** `seconds` (**required** `> 0`), `x`, `y`, `font`, `color`, `done_color` (default green), `done_text` (default `"00:00"`), `bar` (`true` draws a 2-px bottom progress bar), `bar_color`, and optional `sound` (`1..3` or `ding`/`chime`/`bell`) played automatically when the timer reaches zero (also emits a `button`/`countdown_done` event on `/events`).
+
+```json
+[
+  { "op": "clear" },
+  { "op": "countdown", "seconds": 1500, "color": "amber", "bar": true, "sound": "chime" }
+]
+```
+
 ### Fonts
 
 | `font` values | Glyph size | Advance | Supported characters | Fit on 72×16 |

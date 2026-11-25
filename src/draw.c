@@ -9,8 +9,10 @@
 #include <string.h>
 #include <strings.h>
 
+#include "audio.h"
 #include "gif.h"
 #include "json.h"
+#include <time.h>
 
 /* --- Named + Hex Color Parsing --- */
 
@@ -861,6 +863,7 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
                                uint8_t *buf, uint8_t *static_bg,
                                int bw, int bh, size_t frame_bytes,
                                MarkeeScrollState *scroll_state,
+                               MarkeeWidgetState *widget_state,
                                StagedGifs *staged_gifs,
                                const JsonValue *obj,
                                char *err_buf, size_t err_size) {
@@ -886,6 +889,8 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
         }
         scroll_state->active = false;
         scroll_state->has_start_time = false;
+        widget_state->type = MARKEE_WIDGET_NONE;
+        widget_state->has_start_time = false;
         staged_gifs_clear(staged_gifs);
         for (size_t i = 0; i < frame_bytes; i += 3) {
             buf[i + 0] = c.r;
@@ -1209,8 +1214,276 @@ static bool exec_single_op_buf(MarkeeDisplay *disp,
         return false;
     }
 
+    if (strcasecmp(op, "progress") == 0) {
+        int x = opt_int(obj, "x", 0);
+        int y = opt_int(obj, "y", bh > 4 ? bh - 4 : 0);
+        int w = opt_int(obj, "w", bw);
+        int h = opt_int(obj, "h", 4);
+        double val = 0.0;
+        const JsonValue *jval = json_obj_get(obj, "value");
+        if (!jval || !json_as_double(jval, &val)) {
+            snprintf(err_buf, err_size, "'progress' op requires numeric field 'value'");
+            return false;
+        }
+        double maxv = 1.0;
+        const JsonValue *jmax = json_obj_get(obj, "max");
+        if (jmax && json_as_double(jmax, &maxv) && maxv <= 0.0) maxv = 1.0;
+        if (!jmax && val > 1.0) maxv = 100.0; /* auto-accept 0..100 percentage if max omitted */
+        double frac = val / maxv;
+        if (frac < 0.0) frac = 0.0;
+        if (frac > 1.0) frac = 1.0;
+
+        bool hs = false, hf = false;
+        MarkeeColor sc, fc;
+        if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
+        MarkeeColor bar_c = hs ? sc : (hf ? fc : (MarkeeColor){0, 220, 90});
+
+        bool has_bg = false;
+        MarkeeColor bg_c = {24, 26, 32};
+        const JsonValue *jbg = json_obj_get(obj, "bg");
+        if (jbg && !parse_json_color(jbg, &has_bg, &bg_c)) {
+            snprintf(err_buf, err_size, "invalid 'bg' color for 'progress' op");
+            return false;
+        }
+        if (!jbg) has_bg = true;
+
+        bool has_border = false;
+        MarkeeColor border_c = {0, 0, 0};
+        const JsonValue *jbdr = json_obj_get(obj, "border");
+        if (jbdr && !parse_json_color(jbdr, &has_border, &border_c)) {
+            snprintf(err_buf, err_size, "invalid 'border' color for 'progress' op");
+            return false;
+        }
+
+        if (w > 0 && h > 0) {
+            if (has_bg) {
+                draw_rect_buf(buf, bw, bh, x, y, w, h, 0, true, bg_c, false, bg_c);
+                draw_rect_buf(static_bg, bw, bh, x, y, w, h, 0, true, bg_c, false, bg_c);
+            }
+            int ix = has_border ? x + 1 : x;
+            int iy = has_border ? y + 1 : y;
+            int iw = has_border ? w - 2 : w;
+            int ih = has_border ? h - 2 : h;
+            int fill_w = (iw > 0) ? (int)lround(frac * (double)iw) : 0;
+            if (fill_w > 0 && ih > 0) {
+                draw_rect_buf(buf, bw, bh, ix, iy, fill_w, ih, 0, true, bar_c, false, bar_c);
+                draw_rect_buf(static_bg, bw, bh, ix, iy, fill_w, ih, 0, true, bar_c, false, bar_c);
+            }
+            if (has_border) {
+                draw_rect_buf(buf, bw, bh, x, y, w, h, 0, false, border_c, true, border_c);
+                draw_rect_buf(static_bg, bw, bh, x, y, w, h, 0, false, border_c, true, border_c);
+            }
+        }
+        return true;
+    }
+
+    if (strcasecmp(op, "sparkline") == 0) {
+        const JsonValue *jvals = json_obj_get(obj, "values");
+        if (!jvals || jvals->type != JSON_ARRAY || jvals->u.arr.count == 0) {
+            snprintf(err_buf, err_size, "'sparkline' requires non-empty numeric 'values' array");
+            return false;
+        }
+        size_t n = jvals->u.arr.count;
+        if (n > 256) {
+            snprintf(err_buf, err_size, "'sparkline' supports at most 256 values");
+            return false;
+        }
+        double vals[256];
+        double vmin = 0.0, vmax = 0.0;
+        for (size_t i = 0; i < n; i++) {
+            if (!json_as_double(jvals->u.arr.items[i], &vals[i])) {
+                snprintf(err_buf, err_size, "all 'sparkline' values must be numbers");
+                return false;
+            }
+            if (i == 0 || vals[i] < vmin) vmin = vals[i];
+            if (i == 0 || vals[i] > vmax) vmax = vals[i];
+        }
+        const JsonValue *jmin = json_obj_get(obj, "min");
+        const JsonValue *jmax = json_obj_get(obj, "max");
+        if (jmin) json_as_double(jmin, &vmin);
+        if (jmax) json_as_double(jmax, &vmax);
+        double span = vmax - vmin;
+        if (span <= 1e-9) span = 1.0;
+
+        int x = opt_int(obj, "x", 0);
+        int y = opt_int(obj, "y", 0);
+        int w = opt_int(obj, "w", bw);
+        int h = opt_int(obj, "h", bh);
+
+        bool hs = false, hf = false;
+        MarkeeColor sc, fc;
+        if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
+        MarkeeColor line_c = hs ? sc : (hf ? fc : (MarkeeColor){0, 220, 255});
+
+        const char *style = json_as_string(json_obj_get(obj, "style"));
+        bool bars = (style && strcasecmp(style, "bars") == 0);
+
+        if (w > 0 && h > 0) {
+            int prev_px = 0, prev_py = 0;
+            for (size_t i = 0; i < n; i++) {
+                double norm = (vals[i] - vmin) / span;
+                if (norm < 0.0) norm = 0.0;
+                if (norm > 1.0) norm = 1.0;
+                int px = (n == 1) ? x : x + (int)lround((double)i * (double)(w - 1) / (double)(n - 1));
+                int py = y + h - 1 - (int)lround(norm * (double)(h - 1));
+                if (bars) {
+                    draw_line_buf(buf, bw, bh, px, y + h - 1, px, py, line_c);
+                    draw_line_buf(static_bg, bw, bh, px, y + h - 1, px, py, line_c);
+                } else {
+                    if (hf) {
+                        draw_line_buf(buf, bw, bh, px, y + h - 1, px, py, fc);
+                        draw_line_buf(static_bg, bw, bh, px, y + h - 1, px, py, fc);
+                    }
+                    if (i > 0) {
+                        draw_line_buf(buf, bw, bh, prev_px, prev_py, px, py, line_c);
+                        draw_line_buf(static_bg, bw, bh, prev_px, prev_py, px, py, line_c);
+                    } else {
+                        put_px_buf(buf, bw, bh, px, py, line_c);
+                        put_px_buf(static_bg, bw, bh, px, py, line_c);
+                    }
+                }
+                prev_px = px;
+                prev_py = py;
+            }
+        }
+        return true;
+    }
+
+    if (strcasecmp(op, "clock") == 0 || strcasecmp(op, "countdown") == 0) {
+        bool is_countdown = (strcasecmp(op, "countdown") == 0);
+        double duration = 0.0;
+        if (is_countdown) {
+            const JsonValue *jsec = json_obj_get(obj, "seconds");
+            if (!jsec || !json_as_double(jsec, &duration) || !(duration > 0.0) || duration > 359999.0) {
+                snprintf(err_buf, err_size, "'countdown' requires numeric 'seconds' > 0");
+                return false;
+            }
+        }
+
+        const JsonValue *jx = json_obj_get(obj, "x");
+        int x = opt_int(obj, "x", 0);
+        const char *font = json_as_string(json_obj_get(obj, "font"));
+        if (!font || !*font) font = "6x8";
+        int glyph_h = (resolve_font(font) == FONT_4X6) ? 5 : 7;
+        int def_y = (bh - glyph_h) / 2;
+        if (def_y < 0) def_y = 0;
+        int y = opt_int(obj, "y", def_y);
+
+        int align_mode = jx ? 0 : 1; /* default centered if x omitted */
+        const char *align = json_as_string(json_obj_get(obj, "align"));
+        if (align && *align) {
+            if (strcasecmp(align, "left") == 0) align_mode = 0;
+            else if (strcasecmp(align, "center") == 0 || strcasecmp(align, "middle") == 0) align_mode = 1;
+            else if (strcasecmp(align, "right") == 0) align_mode = 2;
+            else {
+                snprintf(err_buf, err_size, "invalid 'align' (expected left, center, or right)");
+                return false;
+            }
+        }
+
+        bool hs = false, hf = false;
+        MarkeeColor sc, fc;
+        if (!extract_stroke_and_fill(obj, &hs, &sc, &hf, &fc, err_buf, err_size)) return false;
+        MarkeeColor col = hs ? sc : (hf ? fc : (is_countdown ? (MarkeeColor){255, 191, 0}
+                                                             : (MarkeeColor){255, 244, 224}));
+
+        MarkeeColor done_c = {0, 255, 120};
+        bool has_done_c = false;
+        const JsonValue *jdc = json_obj_get(obj, "done_color");
+        if (jdc && !parse_json_color(jdc, &has_done_c, &done_c)) {
+            snprintf(err_buf, err_size, "invalid 'done_color' for 'countdown'");
+            return false;
+        }
+
+        MarkeeColor bar_c = col;
+        bool has_bar_c = false;
+        const JsonValue *jbc = json_obj_get(obj, "bar_color");
+        if (jbc && !parse_json_color(jbc, &has_bar_c, &bar_c)) {
+            snprintf(err_buf, err_size, "invalid 'bar_color' for 'countdown'");
+            return false;
+        }
+
+        bool show_bar = false;
+        const JsonValue *jbar = json_obj_get(obj, "bar");
+        if (jbar) json_as_bool(jbar, &show_bar);
+
+        int done_sound_id = 0;
+        const JsonValue *jsnd = json_obj_get(obj, "sound");
+        if (jsnd && jsnd->type != JSON_NULL) {
+            if (jsnd->type == JSON_NUMBER) {
+                int sid = (int)jsnd->u.nval;
+                if (sid >= 1 && sid <= MARKEE_ALERT_COUNT) done_sound_id = sid;
+            } else if (jsnd->type == JSON_STRING) {
+                done_sound_id = audio_parse_alert_id(jsnd->u.sval);
+            }
+            if (done_sound_id <= 0) {
+                snprintf(err_buf, err_size, "invalid 'sound' (valid: 1..3 or ding, chime, bell)");
+                return false;
+            }
+        }
+
+        const char *fmt = json_as_string(json_obj_get(obj, "format"));
+        const char *dtxt = json_as_string(json_obj_get(obj, "done_text"));
+
+        if (widget_state->bg_pixels) {
+            memcpy(widget_state->bg_pixels, static_bg, frame_bytes);
+        }
+        widget_state->type = is_countdown ? MARKEE_WIDGET_COUNTDOWN : MARKEE_WIDGET_CLOCK;
+        widget_state->x = x;
+        widget_state->y = y;
+        widget_state->has_x = (jx != NULL);
+        widget_state->align = align_mode;
+        snprintf(widget_state->font, sizeof(widget_state->font), "%s", font);
+        snprintf(widget_state->format, sizeof(widget_state->format), "%s",
+                 (fmt && *fmt) ? fmt : "24h");
+        widget_state->r = col.r;
+        widget_state->g = col.g;
+        widget_state->b = col.b;
+        widget_state->done_r = done_c.r;
+        widget_state->done_g = done_c.g;
+        widget_state->done_b = done_c.b;
+        snprintf(widget_state->done_text, sizeof(widget_state->done_text), "%s",
+                 (dtxt && *dtxt) ? dtxt : "00:00");
+        widget_state->duration_sec = duration;
+        widget_state->has_start_time = false;
+        widget_state->show_bar = show_bar;
+        widget_state->bar_r = bar_c.r;
+        widget_state->bar_g = bar_c.g;
+        widget_state->bar_b = bar_c.b;
+        widget_state->done_sound_id = done_sound_id;
+        widget_state->done_fired = false;
+
+        /* Render immediate initial frame onto staged buf */
+        char initial[32] = {0};
+        if (is_countdown) {
+            int total_sec = (int)ceil(duration);
+            int hrs = total_sec / 3600;
+            int mins = (total_sec % 3600) / 60;
+            int secs = total_sec % 60;
+            if (hrs > 0) snprintf(initial, sizeof(initial), "%d:%02d:%02d", hrs, mins, secs);
+            else snprintf(initial, sizeof(initial), "%02d:%02d", mins, secs);
+        } else {
+            time_t now = time(NULL);
+            struct tm lt;
+            localtime_r(&now, &lt);
+            if (strcmp(widget_state->format, "24hm") == 0) strftime(initial, sizeof(initial), "%H:%M", &lt);
+            else if (strcmp(widget_state->format, "12h") == 0) strftime(initial, sizeof(initial), "%I:%M:%S", &lt);
+            else if (strcmp(widget_state->format, "12hm") == 0) strftime(initial, sizeof(initial), "%I:%M", &lt);
+            else strftime(initial, sizeof(initial), "%H:%M:%S", &lt);
+        }
+        int tw = draw_measure_text(initial, font);
+        int tx = x;
+        if (align_mode == 1) tx = jx ? (x - tw / 2) : ((bw - tw) / 2);
+        else if (align_mode == 2) tx = jx ? (x - tw) : (bw - tw);
+        draw_render_text_buf(buf, bw, bh, tx, y, initial, font, col);
+        if (is_countdown && show_bar && bh >= 2) {
+            draw_rect_buf(buf, bw, bh, 0, bh - 2, bw, 2, 0, true, bar_c, false, bar_c);
+        }
+        return true;
+    }
+
     snprintf(err_buf, err_size,
-             "unknown op '%s' (supported: line, rect, oval, polygon, text, pixel, clear, image)",
+             "unknown op '%s' (supported: line, rect, oval, polygon, text, pixel, clear, image, progress, sparkline, clock, countdown)",
              op);
     return false;
 }
@@ -1237,10 +1510,12 @@ bool draw_exec_json_ttl(MarkeeDisplay *disp, const char *json_body, size_t json_
     uint8_t *stage = malloc(frame_bytes);
     uint8_t *static_bg = malloc(frame_bytes);
     uint8_t *stage_bg = malloc(frame_bytes);
-    if (!stage || !static_bg || !stage_bg) {
+    uint8_t *stage_widget_bg = malloc(frame_bytes);
+    if (!stage || !static_bg || !stage_bg || !stage_widget_bg) {
         free(stage);
         free(static_bg);
         free(stage_bg);
+        free(stage_widget_bg);
         json_free(root);
         snprintf(err_buf, err_size, "out of memory");
         return false;
@@ -1249,6 +1524,10 @@ bool draw_exec_json_ttl(MarkeeDisplay *disp, const char *json_body, size_t json_
     MarkeeScrollState next_scroll;
     memset(&next_scroll, 0, sizeof(next_scroll));
     next_scroll.bg_pixels = stage_bg;
+
+    MarkeeWidgetState next_widget;
+    memset(&next_widget, 0, sizeof(next_widget));
+    next_widget.bg_pixels = stage_widget_bg;
 
     StagedGifs staged_gifs;
     memset(&staged_gifs, 0, sizeof(staged_gifs));
@@ -1261,7 +1540,7 @@ bool draw_exec_json_ttl(MarkeeDisplay *disp, const char *json_body, size_t json_
     int executed = 0;
     for (size_t i = 0; i < root->u.arr.count; i++) {
         if (!exec_single_op_buf(disp, stage, static_bg, disp->width, disp->height, frame_bytes,
-                                &next_scroll, &staged_gifs,
+                                &next_scroll, &next_widget, &staged_gifs,
                                 root->u.arr.items[i], err_buf, err_size)) {
             ok = false;
             break;
@@ -1282,6 +1561,12 @@ bool draw_exec_json_ttl(MarkeeDisplay *disp, const char *json_body, size_t json_
         disp->scroll.bg_pixels = existing_bg;
         if (next_scroll.active && existing_bg) {
             memcpy(existing_bg, stage_bg, frame_bytes);
+        }
+        uint8_t *existing_wbg = disp->widget.bg_pixels;
+        disp->widget = next_widget;
+        disp->widget.bg_pixels = existing_wbg;
+        if (next_widget.type != MARKEE_WIDGET_NONE && existing_wbg) {
+            memcpy(existing_wbg, stage_widget_bg, frame_bytes);
         }
         if (staged_gifs.count > 0) {
             if (disp->gif.bg_pixels) {
@@ -1314,6 +1599,7 @@ bool draw_exec_json_ttl(MarkeeDisplay *disp, const char *json_body, size_t json_
     free(stage);
     free(static_bg);
     free(stage_bg);
+    free(stage_widget_bg);
     json_free(root);
     if (out_ops_executed) *out_ops_executed = ok ? executed : 0;
     return ok;

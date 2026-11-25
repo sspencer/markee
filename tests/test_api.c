@@ -2142,6 +2142,71 @@ static void test_notify_ttl_api(void) {
     printf("[PASS] transient notifications (POST /notify, POST /draw?ttl, auto-restore, DELETE /notify)\n");
 }
 
+static void test_widgets_api(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, false));
+    MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+    uint8_t pr, pg, pb;
+
+    /* 1. progress bar at 50% (0.5) */
+    const char *prog = "[{\"op\":\"clear\"},{\"op\":\"progress\",\"x\":0,\"y\":6,\"w\":40,\"h\":4,\"value\":0.5,\"color\":\"green\",\"bg\":\"#101010\"}]";
+    HttpResp r = do_request(port, "POST", "/draw", "application/json", prog, strlen(prog));
+    assert(r.status == 200);
+    free(r.body);
+    assert(display_get_pixel(&disp, 10, 7, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 255 && pb == 0);
+    assert(display_get_pixel(&disp, 30, 7, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0x10 && pg == 0x10 && pb == 0x10);
+
+    /* 2. sparkline */
+    const char *spark = "[{\"op\":\"clear\"},{\"op\":\"sparkline\",\"x\":0,\"y\":0,\"w\":72,\"h\":16,\"values\":[0,50,100],\"color\":\"cyan\"}]";
+    r = do_request(port, "POST", "/draw", "application/json", spark, strlen(spark));
+    assert(r.status == 200);
+    free(r.body);
+    /* Start at (0,15) and peak at (71,0) are cyan */
+    assert(display_get_pixel(&disp, 0, 15, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 255 && pb == 255);
+    assert(display_get_pixel(&disp, 71, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 255 && pb == 255);
+
+    /* 3. autonomous clock renders lit pixels */
+    const char *clk = "[{\"op\":\"clear\"},{\"op\":\"clock\",\"color\":\"warmwhite\"}]";
+    r = do_request(port, "POST", "/draw", "application/json", clk, strlen(clk));
+    assert(r.status == 200);
+    free(r.body);
+    display_tick(&disp, 1.0);
+    int lit = 0;
+    for (int y = 0; y < 16; y++)
+        for (int x = 0; x < 72; x++) {
+            display_get_pixel(&disp, x, y, &pr, &pg, &pb);
+            if (pr || pg || pb) lit++;
+        }
+    assert(lit > 30);
+
+    /* 4. autonomous countdown with bar & sound on completion */
+    const char *cd = "[{\"op\":\"clear\"},{\"op\":\"countdown\",\"seconds\":3,\"color\":\"amber\",\"done_color\":\"lime\",\"done_text\":\"DONE\",\"bar\":true,\"sound\":\"bell\"}]";
+    r = do_request(port, "POST", "/draw", "application/json", cd, strlen(cd));
+    assert(r.status == 200);
+    free(r.body);
+
+    display_tick(&disp, 10.0);
+    assert(display_take_pending_alert(&disp) == 0);
+    /* Progress bar at bottom row (y=15) is lit at x=0 */
+    assert(display_get_pixel(&disp, 0, 15, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 191 && pb == 0);
+
+    /* Advance 3.5s -> countdown completes, queues alert sound 3 ('bell') */
+    display_tick(&disp, 13.5);
+    assert(display_take_pending_alert(&disp) == 3);
+    assert(display_take_pending_alert(&disp) == 0); /* drained once */
+
+    server_stop(srv);
+    display_destroy(&disp);
+    printf("[PASS] built-in widgets (progress, sparkline, autonomous clock & countdown)\n");
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     SetTraceLogLevel(LOG_ERROR);
@@ -2161,6 +2226,7 @@ int main(void) {
     test_draw_image_op();
     test_events_api();
     test_notify_ttl_api();
+    test_widgets_api();
 
     printf("\nAll markee tests passed!\n");
     return 0;

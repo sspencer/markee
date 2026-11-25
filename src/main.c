@@ -378,6 +378,8 @@ int main(int argc, char **argv) {
         double t = 0.0;
         while (!atomic_load(&g_quit)) {
             display_tick(&display, t);
+            int pending_snd = display_take_pending_alert(&display);
+            if (pending_snd > 0) audio_trigger(audio, pending_snd, 100);
             audio_tick(audio);
             nanosleep(&ts, NULL);
             t += 1.0 / (double)MARKEE_REFRESH_HZ;
@@ -476,6 +478,10 @@ int main(int argc, char **argv) {
             }
 
             display_tick(&display, GetTime());
+            {
+                int pending_snd = display_take_pending_alert(&display);
+                if (pending_snd > 0) audio_trigger(audio, pending_snd, 100);
+            }
             audio_tick(audio);
 
             uint8_t brightness = 100;
