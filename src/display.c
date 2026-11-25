@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 #include "draw.h"
@@ -97,6 +98,95 @@ void display_stop_gif(MarkeeDisplay *disp) {
     pthread_mutex_lock(&disp->lock);
     display_stop_gif_unlocked(disp);
     pthread_mutex_unlock(&disp->lock);
+}
+
+bool display_parse_transition(const char *s, MarkeeTransitionType *out) {
+    if (!s || !*s || !out) return false;
+    if (strcasecmp(s, "none") == 0) { *out = MARKEE_TRANS_NONE; return true; }
+    if (strcasecmp(s, "fade") == 0 || strcasecmp(s, "crossfade") == 0) { *out = MARKEE_TRANS_FADE; return true; }
+    if (strcasecmp(s, "slide-left") == 0 || strcasecmp(s, "slide") == 0) { *out = MARKEE_TRANS_SLIDE_LEFT; return true; }
+    if (strcasecmp(s, "slide-up") == 0) { *out = MARKEE_TRANS_SLIDE_UP; return true; }
+    if (strcasecmp(s, "wipe") == 0) { *out = MARKEE_TRANS_WIPE; return true; }
+    return false;
+}
+
+void display_capture_transition_from(MarkeeDisplay *disp, uint8_t *out_from) {
+    if (!disp || !out_from || !disp->pixels) return;
+    pthread_mutex_lock(&disp->lock);
+    memcpy(out_from, disp->pixels, disp->frame_bytes);
+    pthread_mutex_unlock(&disp->lock);
+}
+
+void display_activate_transition(MarkeeDisplay *disp, const uint8_t *from_pixels,
+                                 MarkeeTransitionType type, int duration_ms) {
+    if (!disp || !from_pixels || type == MARKEE_TRANS_NONE || !disp->trans.from_pixels) return;
+    if (duration_ms < 50) duration_ms = 50;
+    if (duration_ms > 5000) duration_ms = 5000;
+    pthread_mutex_lock(&disp->lock);
+    memcpy(disp->trans.from_pixels, from_pixels, disp->frame_bytes);
+    disp->trans.type = type;
+    disp->trans.duration_sec = (double)duration_ms / 1000.0;
+    disp->trans.has_start_time = disp->has_tick_time;
+    disp->trans.start_time = disp->has_tick_time ? disp->last_tick_time : 0.0;
+    pthread_mutex_unlock(&disp->lock);
+}
+
+static void apply_transition_unlocked(const MarkeeDisplay *disp, uint8_t *out_rgb) {
+    if (disp->trans.type == MARKEE_TRANS_NONE || !disp->trans.from_pixels) return;
+    double t = 0.0;
+    if (disp->trans.has_start_time && disp->has_tick_time && disp->trans.duration_sec > 0.0) {
+        t = (disp->last_tick_time - disp->trans.start_time) / disp->trans.duration_sec;
+    }
+    if (t <= 0.0) {
+        memcpy(out_rgb, disp->trans.from_pixels, disp->frame_bytes);
+        return;
+    }
+    if (t >= 1.0) return;
+
+    const int w = disp->width;
+    const int h = disp->height;
+    const uint8_t *from = disp->trans.from_pixels;
+    const uint8_t *to = disp->pixels;
+
+    if (disp->trans.type == MARKEE_TRANS_FADE) {
+        double inv = 1.0 - t;
+        for (size_t i = 0; i < disp->frame_bytes; i++) {
+            out_rgb[i] = (uint8_t)lround((double)from[i] * inv + (double)to[i] * t);
+        }
+    } else if (disp->trans.type == MARKEE_TRANS_WIPE) {
+        int split = (int)lround(t * (double)w);
+        for (int y = 0; y < h; y++) {
+            size_t row = (size_t)y * (size_t)w * 3;
+            if (split > 0) memcpy(out_rgb + row, to + row, (size_t)split * 3);
+            if (split < w) memcpy(out_rgb + row + (size_t)split * 3,
+                                  from + row + (size_t)split * 3, (size_t)(w - split) * 3);
+        }
+    } else if (disp->trans.type == MARKEE_TRANS_SLIDE_LEFT) {
+        double eased = 1.0 - (1.0 - t) * (1.0 - t);
+        int shift = (int)lround(eased * (double)w);
+        for (int y = 0; y < h; y++) {
+            size_t row = (size_t)y * (size_t)w * 3;
+            int from_vis = w - shift;
+            if (from_vis > 0) {
+                memcpy(out_rgb + row, from + row + (size_t)shift * 3, (size_t)from_vis * 3);
+            }
+            if (shift > 0) {
+                memcpy(out_rgb + row + (size_t)from_vis * 3, to + row, (size_t)shift * 3);
+            }
+        }
+    } else if (disp->trans.type == MARKEE_TRANS_SLIDE_UP) {
+        double eased = 1.0 - (1.0 - t) * (1.0 - t);
+        int shift = (int)lround(eased * (double)h);
+        size_t row_bytes = (size_t)w * 3;
+        int from_vis = h - shift;
+        for (int y = 0; y < h; y++) {
+            if (y < from_vis) {
+                memcpy(out_rgb + (size_t)y * row_bytes, from + (size_t)(y + shift) * row_bytes, row_bytes);
+            } else {
+                memcpy(out_rgb + (size_t)y * row_bytes, to + (size_t)(y - from_vis) * row_bytes, row_bytes);
+            }
+        }
+    }
 }
 
 void display_notify_cancel_unlocked(MarkeeDisplay *disp) {
@@ -236,8 +326,9 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     uint8_t *notify_scroll_bg = calloc(frame_bytes, 1);
     uint8_t *notify_gif_bg = calloc(frame_bytes, 1);
     uint8_t *notify_widget_bg = calloc(frame_bytes, 1);
+    uint8_t *trans_from = calloc(frame_bytes, 1);
     if (!pixels || !bg_pixels || !gif_bg_pixels || !widget_bg_pixels ||
-        !notify_px || !notify_scroll_bg || !notify_gif_bg || !notify_widget_bg) {
+        !notify_px || !notify_scroll_bg || !notify_gif_bg || !notify_widget_bg || !trans_from) {
         free(pixels);
         free(bg_pixels);
         free(gif_bg_pixels);
@@ -246,6 +337,7 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
         free(notify_scroll_bg);
         free(notify_gif_bg);
         free(notify_widget_bg);
+        free(trans_from);
         return false;
     }
 
@@ -258,6 +350,7 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
         free(notify_scroll_bg);
         free(notify_gif_bg);
         free(notify_widget_bg);
+        free(trans_from);
         return false;
     }
     if (pthread_cond_init(&disp->event_cond, NULL) != 0) {
@@ -270,6 +363,7 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
         free(notify_scroll_bg);
         free(notify_gif_bg);
         free(notify_widget_bg);
+        free(trans_from);
         return false;
     }
     if (pthread_mutex_init(&disp->png_lock, NULL) != 0) {
@@ -283,6 +377,7 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
         free(notify_scroll_bg);
         free(notify_gif_bg);
         free(notify_widget_bg);
+        free(trans_from);
         return false;
     }
 
@@ -293,6 +388,7 @@ bool display_init(MarkeeDisplay *disp, int width, int height, bool start_demo) {
     disp->scroll.bg_pixels = bg_pixels;
     disp->gif.bg_pixels = gif_bg_pixels;
     disp->widget.bg_pixels = widget_bg_pixels;
+    disp->trans.from_pixels = trans_from;
     disp->notify.saved_pixels = notify_px;
     disp->notify.saved_scroll_bg = notify_scroll_bg;
     disp->notify.saved_gif_bg = notify_gif_bg;
@@ -316,6 +412,7 @@ void display_destroy(MarkeeDisplay *disp) {
     free(disp->scroll.bg_pixels);
     free(disp->gif.bg_pixels);
     free(disp->widget.bg_pixels);
+    free(disp->trans.from_pixels);
     free(disp->notify.saved_pixels);
     free(disp->notify.saved_scroll_bg);
     free(disp->notify.saved_gif_bg);
@@ -324,6 +421,7 @@ void display_destroy(MarkeeDisplay *disp) {
     disp->scroll.bg_pixels = NULL;
     disp->gif.bg_pixels = NULL;
     disp->widget.bg_pixels = NULL;
+    disp->trans.from_pixels = NULL;
     disp->notify.saved_pixels = NULL;
     disp->notify.saved_scroll_bg = NULL;
     disp->notify.saved_gif_bg = NULL;
@@ -551,6 +649,7 @@ bool display_get_raw_rgb(MarkeeDisplay *disp, uint8_t *out_rgb, size_t out_cap) 
     if (!disp || !disp->pixels || !out_rgb || out_cap < disp->frame_bytes) return false;
     pthread_mutex_lock(&disp->lock);
     memcpy(out_rgb, disp->pixels, disp->frame_bytes);
+    apply_transition_unlocked(disp, out_rgb);
     bool mono = disp->mono_enabled;
     uint8_t tr = disp->mono_r, tg = disp->mono_g, tb = disp->mono_b;
     pthread_mutex_unlock(&disp->lock);
@@ -580,6 +679,7 @@ bool display_snapshot(MarkeeDisplay *disp, uint8_t *out_rgb, size_t out_cap,
     if (!disp || !disp->pixels || !out_rgb || out_cap < disp->frame_bytes) return false;
     pthread_mutex_lock(&disp->lock);
     memcpy(out_rgb, disp->pixels, disp->frame_bytes);
+    apply_transition_unlocked(disp, out_rgb);
     if (out_brightness) {
         *out_brightness = compute_effective_brightness_unlocked(disp);
     }
@@ -1215,6 +1315,15 @@ void display_tick(MarkeeDisplay *disp, double time_sec) {
             disp->notify.has_start_time = true;
         } else if ((time_sec - disp->notify.start_time) >= disp->notify.duration_sec) {
             display_notify_restore_unlocked(disp);
+        }
+    }
+    if (disp->trans.type != MARKEE_TRANS_NONE) {
+        if (!disp->trans.has_start_time) {
+            disp->trans.start_time = time_sec;
+            disp->trans.has_start_time = true;
+        } else if ((time_sec - disp->trans.start_time) >= disp->trans.duration_sec) {
+            disp->trans.type = MARKEE_TRANS_NONE;
+            disp->trans.has_start_time = false;
         }
     }
     pthread_mutex_unlock(&disp->lock);

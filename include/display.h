@@ -19,6 +19,22 @@ typedef enum {
     MARKEE_ERR_OUT_OF_RANGE
 } MarkeeResult;
 
+typedef enum {
+    MARKEE_TRANS_NONE = 0,
+    MARKEE_TRANS_FADE,
+    MARKEE_TRANS_SLIDE_LEFT,
+    MARKEE_TRANS_SLIDE_UP,
+    MARKEE_TRANS_WIPE
+} MarkeeTransitionType;
+
+typedef struct {
+    MarkeeTransitionType type;
+    double duration_sec;
+    bool has_start_time;
+    double start_time;
+    uint8_t *from_pixels;
+} MarkeeTransitionState;
+
 typedef struct {
     bool active;
     char text[512];
@@ -143,6 +159,7 @@ typedef struct {
     MarkeeScrollState scroll;
     MarkeeGifAnimState gif;
     MarkeeWidgetState widget;
+    MarkeeTransitionState trans;
     int pending_alert_sound;            /* 0=none, 1..3=pending sound from autonomous widget */
     MarkeeNotifyState notify;
     MarkeeEvent events[MARKEE_EVENT_RING_CAP];
@@ -210,6 +227,12 @@ void display_stop_gif(MarkeeDisplay *disp);
 void display_stop_gif_unlocked(MarkeeDisplay *disp);
 bool display_get_gif_status(MarkeeDisplay *disp, MarkeeGifStatus *out_status);
 bool display_is_gif_active(MarkeeDisplay *disp);
+
+/* Scene transitions ("fade", "slide-left", "slide-up", "wipe"). */
+bool display_parse_transition(const char *s, MarkeeTransitionType *out);
+void display_capture_transition_from(MarkeeDisplay *disp, uint8_t *out_from);
+void display_activate_transition(MarkeeDisplay *disp, const uint8_t *from_pixels,
+                                 MarkeeTransitionType type, int duration_ms);
 
 /* Transient notification TTL support: save current state before drawing a temporary
  * overlay, automatically restore after ttl_sec in display_tick(), or dismiss early. */

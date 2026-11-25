@@ -2202,9 +2202,50 @@ static void test_widgets_api(void) {
     assert(display_take_pending_alert(&disp) == 3);
     assert(display_take_pending_alert(&disp) == 0); /* drained once */
 
+    /* 5. Scene transitions (?transition=fade|wipe|slide-left|slide-up) */
+    {
+        r = do_request(port, "POST", "/fill?color=red", NULL, NULL, 0);
+        assert(r.status == 200);
+        free(r.body);
+        display_tick(&disp, 20.0);
+
+        const char *to_blue = "[{\"op\":\"clear\",\"color\":\"blue\"}]";
+        r = do_request(port, "POST", "/draw?transition=fade&transition_ms=200",
+                       "application/json", to_blue, strlen(to_blue));
+        assert(r.status == 200);
+        free(r.body);
+
+        /* Halfway through 200ms fade: pixel (0,0) blends ~128 red + ~128 blue */
+        uint8_t snap[MARKEE_FRAME_BYTES];
+        display_tick(&disp, 20.1);
+        assert(display_get_raw_rgb(&disp, snap, sizeof(snap)));
+        assert(snap[0] >= 120 && snap[0] <= 136 && snap[1] == 0 && snap[2] >= 120 && snap[2] <= 136);
+
+        /* After 200ms fade completes: pure blue */
+        display_tick(&disp, 20.25);
+        assert(display_get_raw_rgb(&disp, snap, sizeof(snap)));
+        assert(snap[0] == 0 && snap[1] == 0 && snap[2] == 255);
+
+        /* Wipe transition halfway: left half new (green), right half old (blue) */
+        const char *to_green = "[{\"op\":\"clear\",\"color\":\"green\"}]";
+        r = do_request(port, "POST", "/draw?transition=wipe&transition_ms=200",
+                       "application/json", to_green, strlen(to_green));
+        assert(r.status == 200);
+        free(r.body);
+        display_tick(&disp, 20.35);
+        assert(display_get_raw_rgb(&disp, snap, sizeof(snap)));
+        assert(snap[0] == 0 && snap[1] == 255 && snap[2] == 0);                     /* x=0 -> green */
+        assert(snap[71 * 3 + 0] == 0 && snap[71 * 3 + 1] == 0 && snap[71 * 3 + 2] == 255); /* x=71 -> blue */
+
+        /* Invalid transition rejected with 400 */
+        r = do_request(port, "POST", "/draw?transition=spin", "application/json", to_green, strlen(to_green));
+        assert(r.status == 400);
+        free(r.body);
+    }
+
     server_stop(srv);
     display_destroy(&disp);
-    printf("[PASS] built-in widgets (progress, sparkline, autonomous clock & countdown)\n");
+    printf("[PASS] built-in widgets & scene transitions (progress, sparkline, clock, countdown, fade/wipe)\n");
 }
 
 int main(void) {

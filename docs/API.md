@@ -243,7 +243,11 @@ curl -X POST http://127.0.0.1:8080/draw -H "Content-Type: application/json" -d '
 {"ok":true,"ops":5}
 ```
 
-**Common `400` errors:** empty body, non-array or empty array `[]`, JSON syntax error, missing `"op"`, unknown op name, invalid `"color"`/`"fill"` value, or op-specific validation errors (see below). Pass optional `?ttl=<sec>` (`0..86400`) to show the batch temporarily and automatically restore the previous display state when the timer expires.
+**Common `400` errors:** empty body, non-array or empty array `[]`, JSON syntax error, missing `"op"`, unknown op name, invalid `"color"`/`"fill"` value, or op-specific validation errors (see below).
+
+**Optional query parameters on `POST /draw`:**
+- `?ttl=<sec>` (`0..86400`) — display the batch temporarily and automatically restore the previous display state when the timer expires.
+- `?transition=<fade|slide-left|slide-up|wipe>&transition_ms=<50..5000>` — animate the switch from the previous frame to the new frame (default `250` ms).
 
 ### POST /notify
 

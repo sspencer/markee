@@ -610,6 +610,22 @@ static int parse_alert_json_value(const JsonValue *v) {
     return 0;
 }
 
+static bool extract_transition_params(const HttpRequest *req,
+                                      MarkeeTransitionType *out_type, int *out_ms) {
+    *out_type = MARKEE_TRANS_NONE;
+    *out_ms = 250;
+    char val[32];
+    if (query_get(req->query, "transition", val, sizeof(val))) {
+        if (!display_parse_transition(val, out_type)) return false;
+    }
+    if (query_get(req->query, "transition_ms", val, sizeof(val))) {
+        int ms = 0;
+        if (!parse_int_param(val, &ms) || ms < 50 || ms > 5000) return false;
+        *out_ms = ms;
+    }
+    return true;
+}
+
 static int format_event_json(const MarkeeEvent *ev, char *out, size_t out_size) {
     char esc[96];
     json_escape(ev->detail, esc, sizeof(esc));
@@ -978,12 +994,31 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
             }
             ttl_sec = d;
         }
+        MarkeeTransitionType tr_type = MARKEE_TRANS_NONE;
+        int tr_ms = 250;
+        if (!extract_transition_params(req, &tr_type, &tr_ms)) {
+            send_json(fd, 400, "Bad Request",
+                      "{\"error\":\"invalid transition (fade, slide-left, slide-up, wipe) or transition_ms (50..5000)\"}",
+                      ka);
+            return;
+        }
+        uint8_t *tr_from = NULL;
+        if (tr_type != MARKEE_TRANS_NONE) {
+            tr_from = malloc(disp->frame_bytes);
+            if (tr_from) display_capture_transition_from(disp, tr_from);
+        }
+
         int executed = 0;
         char err[256] = {0};
         if (!draw_exec_json_ttl(disp, (const char *)req->body, req->body_len, ttl_sec,
                                 &executed, err, sizeof(err))) {
+            free(tr_from);
             send_error(fd, 400, "Bad Request", err[0] ? err : "invalid draw request", ka);
             return;
+        }
+        if (tr_from) {
+            display_activate_transition(disp, tr_from, tr_type, tr_ms);
+            free(tr_from);
         }
         char json[160];
         if (ttl_sec > 0.0) {
