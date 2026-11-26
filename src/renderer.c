@@ -319,8 +319,22 @@ MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
 
     if (opts->has_position || (mon_w > 0 && mon_h > 0)) {
         int px = 0, py = 0;
-        renderer_compute_window_position(mon_w, mon_h, layout.window_w, layout.window_h,
-                                         opts, &px, &py);
+        if (opts->borderless) {
+            /* In borderless mode the outer window includes transparent drop-shadow padding
+             * (body_x, body_y) around the visible molded enclosure (body_w, body_h).
+             * Align coordinates and screen edges to the visible graphics frame itself. */
+            int inset_x = (int)roundf(layout.body_x);
+            int inset_y = (int)roundf(layout.body_y);
+            renderer_compute_window_position(mon_w, mon_h,
+                                             (int)roundf(layout.body_w),
+                                             (int)roundf(layout.body_h),
+                                             opts, &px, &py);
+            px -= inset_x;
+            py -= inset_y;
+        } else {
+            renderer_compute_window_position(mon_w, mon_h, layout.window_w, layout.window_h,
+                                             opts, &px, &py);
+        }
         SetWindowPosition(px, py);
     }
 

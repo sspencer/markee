@@ -605,7 +605,9 @@ int main(int argc, char **argv) {
 
         if (save_position && active_config_path[0]) {
             Vector2 wp = GetWindowPosition();
-            if (!markee_config_save_position(active_config_path, (int)wp.x, (int)wp.y)) {
+            int sx = (int)wp.x + (borderless ? (int)(layout.body_x + 0.5f) : 0);
+            int sy = (int)wp.y + (borderless ? (int)(layout.body_y + 0.5f) : 0);
+            if (!markee_config_save_position(active_config_path, sx, sy)) {
                 fprintf(stderr, "Warning: failed to save window position to %s\n", active_config_path);
             }
         }
