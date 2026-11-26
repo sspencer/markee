@@ -26,6 +26,9 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+# The 3x5 font advances 4 px per character (3 px glyph + 1 px spacing).
+SMALL_FONT_ADVANCE = 4
+
 
 def default_url() -> str:
     if os.environ.get("MARKEE_URL"):
@@ -52,6 +55,14 @@ class MarkeeClient:
         )
         with urllib.request.urlopen(req, timeout=5.0) as resp:
             resp.read()
+
+    def display_size(self) -> Tuple[int, int]:
+        """Return the live (width, height) of the matrix from GET /info."""
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        req = urllib.request.Request(f"{self.base_url}/info", headers=headers)
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            info = json.loads(resp.read().decode("utf-8"))
+        return int(info.get("width", 72)), int(info.get("height", 16))
 
     def draw(self, ops: List[Dict[str, Any]], transition: Optional[str] = None) -> None:
         q = f"?transition={transition}" if transition else ""
@@ -107,7 +118,7 @@ def poll_github_actions(repo_slug: str, gh_token: Optional[str]) -> Tuple[str, s
     return "fail", f"FAIL {branch}", run_id
 
 
-def build_status_ops(state: str, top_text: str, bottom_text: str) -> List[Dict[str, Any]]:
+def build_status_ops(state: str, top_text: str, bottom_text: str, size: Tuple[int, int]) -> List[Dict[str, Any]]:
     palette = {
         "pass": ("check", "#22ee88", "#04160c", "#1b5e3c"),
         "fail": ("cross", "#ff4433", "#1a0404", "#661818"),
@@ -117,12 +128,18 @@ def build_status_ops(state: str, top_text: str, bottom_text: str) -> List[Dict[s
         "unknown": ("bell", "#8899aa", "#080a0e", "#26303d"),
     }
     icon, fg, bg, border = palette.get(state, palette["unknown"])
+    w, h = size
+    # Two text rows (5 px each, 2 px apart) centered vertically beside an 8x8 icon,
+    # all inside a full-display rounded border.
+    text_x = 13
+    top = max(1, (h - 12) // 2)
+    max_chars = max(1, (w - text_x - 2 + 1) // SMALL_FONT_ADVANCE)
     return [
         {"op": "clear", "color": bg},
-        {"op": "rect", "x": 0, "y": 0, "w": 72, "h": 16, "color": border, "radius": 2},
-        {"op": "icon", "name": icon, "x": 3, "y": 4, "color": fg},
-        {"op": "text", "x": 13, "y": 2, "text": top_text[:11], "color": "warmwhite", "font": "3x5"},
-        {"op": "text", "x": 13, "y": 9, "text": bottom_text[:11], "color": fg, "font": "3x5"},
+        {"op": "rect", "x": 0, "y": 0, "w": w, "h": h, "color": border, "radius": 2},
+        {"op": "icon", "name": icon, "x": 3, "y": max(0, (h - 8) // 2), "color": fg},
+        {"op": "text", "x": text_x, "y": top, "text": top_text[:max_chars], "color": "warmwhite", "font": "3x5"},
+        {"op": "text", "x": text_x, "y": top + 7, "text": bottom_text[:max_chars], "color": fg, "font": "3x5"},
     ]
 
 
@@ -140,6 +157,13 @@ def main() -> int:
     args = parser.parse_args()
 
     client = MarkeeClient(args.url, args.token)
+    size = (72, 16)
+    if not args.dry_run:
+        try:
+            size = client.display_size()
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            print(f"Error: cannot read display size from {args.url}/info ({exc})", file=sys.stderr)
+            return 1
     last_fp: Optional[str] = None
     last_ci_key: Optional[Tuple[str, str]] = None
 
@@ -156,7 +180,7 @@ def main() -> int:
                     continue
 
                 ci_key = (kind, run_id)
-                ops = build_status_ops(kind, args.github.split("/")[-1], label)
+                ops = build_status_ops(kind, args.github.split("/")[-1], label, size)
                 if args.dry_run:
                     print(f"[github] {args.github}: {kind} ({label}, run={run_id})")
                 elif ci_key != last_ci_key:
@@ -177,14 +201,14 @@ def main() -> int:
                     last_fp = fp
                     if args.cmd:
                         if not args.dry_run:
-                            client.draw(build_status_ops("running", branch, "RUNNING..."))
+                            client.draw(build_status_ops("running", branch, "RUNNING...", size))
                         t0 = time.monotonic()
                         proc = subprocess.run(args.cmd, shell=True, cwd=args.repo, check=False)
                         elapsed = time.monotonic() - t0
                         passed = proc.returncode == 0
                         state = "pass" if passed else "fail"
                         summary = f"PASS {elapsed:.1f}S" if passed else f"FAIL RC={proc.returncode}"
-                        ops = build_status_ops(state, branch, summary)
+                        ops = build_status_ops(state, branch, summary, size)
                         if args.dry_run:
                             print(f"[git] {branch} dirty={dirty} -> {summary}")
                         else:
@@ -201,7 +225,7 @@ def main() -> int:
                     else:
                         state = "dirty" if dirty > 0 else "clean"
                         sub = f"{dirty} MODIFIED" if dirty > 0 else "CLEAN"
-                        ops = build_status_ops(state, branch, sub)
+                        ops = build_status_ops(state, branch, sub, size)
                         if args.dry_run:
                             print(f"[git] {branch}: {sub}")
                         else:

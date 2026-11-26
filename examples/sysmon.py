@@ -3,8 +3,9 @@
 Live system monitor applet for markee.
 
 Samples CPU load, memory usage, and network byte throughput using Python 3
-stdlib only (macOS + Linux) and renders a compact 72x16 dashboard with:
-  - Rolling CPU sparkline (36 samples)
+stdlib only (macOS + Linux) and renders a compact dashboard laid out to the
+live display size reported by GET /info (designed around 72x16) with:
+  - Rolling CPU sparkline (one sample per pixel column of the left pane)
   - Color-coded CPU & MEM percentages (3x5 font)
   - Memory progress bar + live network activity indicator
 
@@ -167,22 +168,43 @@ def level_color(pct: float) -> str:
     return "#34e89e"
 
 
-def build_ops(cpu: float, mem: float, net_kbps: float, history: Deque[float]) -> List[Dict[str, Any]]:
+class Layout:
+    """Pixel positions for the two-pane dashboard, derived from the display size.
+
+    At 72x16 this reproduces the original hand-tuned layout: a CPU pane on the
+    left (x=1..37), a divider at x=39, and a MEM/NET pane on the right. The
+    sparkline grows to fill the remaining height on taller displays.
+    """
+
+    def __init__(self, width: int, height: int) -> None:
+        self.w = max(16, width)
+        self.h = max(16, height)
+        self.div = self.w // 2 + 3                       # vertical divider column
+        self.spark_w = max(2, min(256, self.div - 3))    # sparkline width == history length
+        self.spark_h = self.h - 8
+        self.right_x = self.div + 3                      # left edge of the right pane
+        self.right_w = max(1, self.w - 1 - self.right_x)
+        self.net_bar_x = self.right_x + 14
+        self.net_bar_w = max(1, self.w - 1 - self.net_bar_x)
+
+
+def build_ops(cpu: float, mem: float, net_kbps: float, history: Deque[float], lay: Layout) -> List[Dict[str, Any]]:
     c_col = level_color(cpu)
     m_col = level_color(mem)
     net_bar = min(100.0, (net_kbps / 512.0) * 100.0)  # 512 KB/s = full scale
+    h = lay.h
 
     return [
         {"op": "clear", "color": "#05070a"},
         # Left pane: CPU label + value + sparkline
         {"op": "text", "x": 1, "y": 1, "text": "CPU", "color": "#7b8a9e", "font": "3x5"},
-        {"op": "text", "x": 15, "y": 1, "w": 22, "align": "right", "text": f"{int(round(cpu))}%", "color": c_col, "font": "3x5"},
+        {"op": "text", "x": 15, "y": 1, "w": lay.div - 17, "align": "right", "text": f"{int(round(cpu))}%", "color": c_col, "font": "3x5"},
         {
             "op": "sparkline",
             "x": 1,
             "y": 7,
-            "w": 36,
-            "h": 8,
+            "w": lay.spark_w,
+            "h": lay.spark_h,
             "values": [round(v, 1) for v in history],
             "min": 0,
             "max": 100,
@@ -190,27 +212,27 @@ def build_ops(cpu: float, mem: float, net_kbps: float, history: Deque[float]) ->
             "fill": "#0d221c" if cpu < 60 else "#281408",
         },
         # Vertical divider
-        {"op": "line", "x1": 39, "y1": 1, "x2": 39, "y2": 14, "color": "#1c2430"},
+        {"op": "line", "x1": lay.div, "y1": 1, "x2": lay.div, "y2": h - 2, "color": "#1c2430"},
         # Right pane: MEM bar + NET bar
-        {"op": "text", "x": 42, "y": 1, "text": "MEM", "color": "#7b8a9e", "font": "3x5"},
-        {"op": "text", "x": 55, "y": 1, "w": 16, "align": "right", "text": f"{int(round(mem))}%", "color": m_col, "font": "3x5"},
+        {"op": "text", "x": lay.right_x, "y": 1, "text": "MEM", "color": "#7b8a9e", "font": "3x5"},
+        {"op": "text", "x": lay.right_x + 13, "y": 1, "w": max(1, lay.right_w - 13), "align": "right", "text": f"{int(round(mem))}%", "color": m_col, "font": "3x5"},
         {
             "op": "progress",
-            "x": 42,
+            "x": lay.right_x,
             "y": 7,
-            "w": 29,
+            "w": lay.right_w,
             "h": 3,
             "value": mem,
             "max": 100,
             "color": m_col,
             "bg": "#151a22",
         },
-        {"op": "text", "x": 42, "y": 11, "text": "NET", "color": "#55687d", "font": "3x5"},
+        {"op": "text", "x": lay.right_x, "y": h - 5, "text": "NET", "color": "#55687d", "font": "3x5"},
         {
             "op": "progress",
-            "x": 56,
-            "y": 12,
-            "w": 15,
+            "x": lay.net_bar_x,
+            "y": h - 4,
+            "w": lay.net_bar_w,
             "h": 3,
             "value": net_bar,
             "max": 100,
@@ -218,6 +240,15 @@ def build_ops(cpu: float, mem: float, net_kbps: float, history: Deque[float]) ->
             "bg": "#151a22",
         },
     ]
+
+
+def fetch_display_size(base_url: str, token: Optional[str]) -> Tuple[int, int]:
+    """Return the live (width, height) of the matrix from GET /info."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    req = urllib.request.Request(f"{base_url.rstrip('/')}/info", headers=headers)
+    with urllib.request.urlopen(req, timeout=5.0) as resp:
+        info = json.loads(resp.read().decode("utf-8"))
+    return int(info.get("width", 72)), int(info.get("height", 16))
 
 
 def post_draw(base_url: str, token: Optional[str], ops: List[Dict[str, Any]]) -> None:
@@ -243,11 +274,20 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Print sampled metrics and draw payload without contacting markee")
     args = parser.parse_args()
 
+    width, height = 72, 16
+    if not args.dry_run:
+        try:
+            width, height = fetch_display_size(args.url, args.token)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            print(f"Error: cannot read display size from {args.url}/info ({exc})", file=sys.stderr)
+            return 1
+    lay = Layout(width, height)
+
     sampler = SystemSampler()
-    history: Deque[float] = collections.deque([0.0] * 36, maxlen=36)
+    history: Deque[float] = collections.deque([0.0] * lay.spark_w, maxlen=lay.spark_w)
 
     if not args.dry_run:
-        print(f"System monitor streaming to {args.url} every {args.interval:.1f}s (Ctrl+C to stop)")
+        print(f"System monitor streaming to {args.url} ({width}x{height}) every {args.interval:.1f}s (Ctrl+C to stop)")
 
     try:
         while True:
@@ -255,7 +295,7 @@ def main() -> int:
             mem = sampler.mem_percent()
             net = sampler.net_kbps()
             history.append(cpu)
-            ops = build_ops(cpu, mem, net, history)
+            ops = build_ops(cpu, mem, net, history, lay)
 
             if args.dry_run:
                 print(f"CPU={cpu:.1f}% MEM={mem:.1f}% NET={net:.1f}KB/s ({len(ops)} draw ops)")

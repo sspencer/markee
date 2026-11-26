@@ -23,7 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def default_url() -> str:
@@ -66,9 +66,15 @@ class Client:
         wait_ms = max(0, min(5000, int(round(wait_s * 1000.0))))
         return self._req("GET", f"/events?since={since}&wait={wait_ms}", timeout=wait_s + 3.0)
 
+    def display_size(self) -> Tuple[int, int]:
+        """Return the live (width, height) of the matrix from GET /info."""
+        info = self._req("GET", "/info")
+        return max(1, int(info.get("width", 72))), max(1, int(info.get("height", 16)))
+
 
 def render_phase(
     client: Client,
+    size: Tuple[int, int],
     phase: str,
     remaining_s: float,
     total_s: float,
@@ -96,14 +102,18 @@ def render_phase(
         icon = "sun"
         tag = "LB" if phase == "long_break" else "BR"
 
+    w, h = size
+    # The layout is a 16-row band, centered vertically on taller displays; the
+    # countdown's progress bar always hugs the bottom two rows of the matrix.
+    top = max(0, (h - 16) // 2)
     ops: List[Dict[str, Any]] = [
         {"op": "clear"},
-        {"op": "icon", "name": icon, "x": 2, "y": 3, "color": icon_color},
-        {"op": "text", "x": 12, "y": 4, "text": tag, "color": "#8899aa", "font": "3x5"},
+        {"op": "icon", "name": icon, "x": 2, "y": top + 3, "color": icon_color},
+        {"op": "text", "x": 12, "y": top + 4, "text": tag, "color": "#8899aa", "font": "3x5"},
         {
             "op": "countdown",
-            "x": 70,
-            "y": 4,
+            "x": w - 2,
+            "y": top + 4,
             "align": "right",
             "seconds": max(0.0, remaining_s),
             "color": color,
@@ -113,16 +123,18 @@ def render_phase(
         },
     ]
 
-    # Cycle progress indicator dots along top-left edge (y=0).
-    for i in range(min(cycles, 8)):
+    # Cycle progress indicator dots along the top-left edge of the band.
+    max_dots = max(1, (w - 2) // 3)
+    for i in range(min(cycles, 8, max_dots)):
         dot_color = color if i < cycle else "#222830"
-        ops.append({"op": "rect", "x": 2 + i * 3, "y": 0, "w": 2, "h": 1, "fill": dot_color})
+        ops.append({"op": "rect", "x": 2 + i * 3, "y": top, "w": 2, "h": 1, "fill": dot_color})
 
     client.draw(ops, transition=transition)
 
 
 def run_phase(
     client: Client,
+    size: Tuple[int, int],
     phase: str,
     duration_s: float,
     cycle: int,
@@ -133,7 +145,7 @@ def run_phase(
     deadline = start + duration_s
     last_band = -1
 
-    render_phase(client, phase, duration_s, duration_s, cycle, cycles, transition="slide-left")
+    render_phase(client, size, phase, duration_s, duration_s, cycle, cycles, transition="slide-left")
 
     while True:
         remaining = deadline - time.monotonic()
@@ -144,7 +156,7 @@ def run_phase(
         frac = remaining / duration_s if duration_s > 0 else 0.0
         band = 2 if frac <= 0.15 else (1 if frac <= 0.35 else 0)
         if phase == "focus" and band != last_band and last_band != -1:
-            render_phase(client, phase, remaining, duration_s, cycle, cycles)
+            render_phase(client, size, phase, remaining, duration_s, cycle, cycles)
         last_band = band
 
         wait_s = min(1.0, max(0.1, remaining))
@@ -182,18 +194,19 @@ def main() -> int:
     client = Client(args.url, args.token)
 
     try:
+        size = client.display_size()
         ev0 = client.poll_events(0, wait_s=0.0)
         last_event_id = int(ev0.get("last_id", 0))
     except Exception as exc:
         print(f"Error connecting to markee at {args.url}: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Pomodoro started on {args.url} ({cycles} cycles; press Space/bezel to skip phase, Ctrl+C to stop)")
+    print(f"Pomodoro started on {args.url} at {size[0]}x{size[1]} ({cycles} cycles; press Space/bezel to skip phase, Ctrl+C to stop)")
 
     try:
         for cycle in range(1, cycles + 1):
             print(f"Cycle {cycle}/{cycles}: FOCUS ({work_s:.0f}s)")
-            last_event_id = run_phase(client, "focus", work_s, cycle, cycles, last_event_id)
+            last_event_id = run_phase(client, size, "focus", work_s, cycle, cycles, last_event_id)
             if not args.mute:
                 client.alert(melody="C5:110,E5:110,G5:220")
 
@@ -201,15 +214,17 @@ def main() -> int:
             brk_phase = "long_break" if is_last else "break"
             brk_s = long_s if is_last else short_s
             print(f"Cycle {cycle}/{cycles}: {'LONG BREAK' if is_last else 'BREAK'} ({brk_s:.0f}s)")
-            last_event_id = run_phase(client, brk_phase, brk_s, cycle, cycles, last_event_id)
+            last_event_id = run_phase(client, size, brk_phase, brk_s, cycle, cycles, last_event_id)
             if not args.mute:
                 client.alert(sound="chime" if not is_last else "bell")
 
+        w, h = size
+        top = max(0, (h - 16) // 2)
         client.draw(
             [
                 {"op": "clear", "color": "#04160c"},
-                {"op": "icon", "name": "check", "x": 4, "y": 4, "color": "green"},
-                {"op": "text", "x": 15, "y": 4, "w": 55, "align": "left", "text": "DONE!", "color": "warmwhite"},
+                {"op": "icon", "name": "check", "x": 4, "y": top + 4, "color": "green"},
+                {"op": "text", "x": 15, "y": top + 4, "w": max(1, w - 17), "align": "left", "text": "DONE!", "color": "warmwhite"},
             ],
             transition="fade",
         )

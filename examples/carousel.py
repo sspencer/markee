@@ -33,6 +33,26 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+Size = Tuple[int, int]
+CardFn = Callable[[Size], List[Dict[str, Any]]]
+
+# The 3x5 font advances 4 px per character (3 px glyph + 1 px spacing).
+SMALL_FONT_ADVANCE = 4
+TEXT_X = 14  # left edge of card text, just right of the 8x8 icon
+
+
+def card_frame(size: Size) -> Tuple[int, int, int, int]:
+    """Return (w, h, top, max_chars) for a card on a display of the given size.
+
+    Cards are laid out in a 16-row band centered vertically on the display, with
+    the page dots on the very bottom row. max_chars is how many 3x5 characters fit
+    between TEXT_X and a 2 px right margin.
+    """
+    w, h = size
+    top = max(0, (h - 16) // 2)
+    max_chars = max(1, (w - TEXT_X - 2 + 1) // SMALL_FONT_ADVANCE)
+    return w, h, top, max_chars
+
 
 def default_url() -> str:
     if os.environ.get("MARKEE_URL"):
@@ -66,19 +86,25 @@ class Client:
             q = f"?transition={urllib.parse.quote(transition)}&transition_ms={transition_ms}"
         self._req("POST", f"/draw{q}", ops)
 
+    def display_size(self) -> Size:
+        """Return the live (width, height) of the matrix from GET /info."""
+        info = self._req("GET", "/info")
+        return int(info.get("width", 72)), int(info.get("height", 16))
+
     def poll_events(self, since: int, wait_s: float) -> Dict[str, Any]:
         wait_ms = max(0, min(5000, int(round(wait_s * 1000.0))))
         return self._req("GET", f"/events?since={since}&wait={wait_ms}", timeout=wait_s + 3.0)
 
 
-def card_clock() -> List[Dict[str, Any]]:
+def card_clock(size: Size) -> List[Dict[str, Any]]:
+    w, _, top, _ = card_frame(size)
     return [
         {"op": "clear", "color": "#04060c"},
-        {"op": "icon", "name": "clock", "x": 3, "y": 3, "color": "amber"},
+        {"op": "icon", "name": "clock", "x": 3, "y": top + 3, "color": "amber"},
         {
             "op": "clock",
-            "x": 42,
-            "y": 4,
+            "x": (w + 12) // 2,  # centered in the space right of the icon
+            "y": top + 4,
             "align": "center",
             "format": "24h",
             "color": "warmwhite",
@@ -86,18 +112,20 @@ def card_clock() -> List[Dict[str, Any]]:
     ]
 
 
-def card_date() -> List[Dict[str, Any]]:
+def card_date(size: Size) -> List[Dict[str, Any]]:
+    w, h, top, _ = card_frame(size)
     now = datetime.datetime.now()
     day = now.strftime("%a").upper()
     date_str = now.strftime("%b %d").upper()
     return [
-        {"op": "gradient", "x": 0, "y": 0, "w": 72, "h": 16, "from": "#060c1a", "to": "#10081a", "direction": "horizontal"},
-        {"op": "icon", "name": "star", "x": 3, "y": 3, "color": "#ffbf00"},
-        {"op": "text", "x": 14, "y": 4, "text": f"{day} {date_str}", "color": "warmwhite", "font": "prop"},
+        {"op": "gradient", "x": 0, "y": 0, "w": w, "h": h, "from": "#060c1a", "to": "#10081a", "direction": "horizontal"},
+        {"op": "icon", "name": "star", "x": 3, "y": top + 3, "color": "#ffbf00"},
+        {"op": "text", "x": TEXT_X, "y": top + 4, "text": f"{day} {date_str}", "color": "warmwhite", "font": "prop"},
     ]
 
 
-def card_sys() -> List[Dict[str, Any]]:
+def card_sys(size: Size) -> List[Dict[str, Any]]:
+    w, _, top, _ = card_frame(size)
     ncpu = max(1, os.cpu_count() or 1)
     try:
         load1, _, _ = os.getloadavg()
@@ -107,14 +135,15 @@ def card_sys() -> List[Dict[str, Any]]:
     col = "#ff4433" if cpu >= 85 else ("amber" if cpu >= 60 else "#34e89e")
     return [
         {"op": "clear", "color": "#05070a"},
-        {"op": "icon", "name": "bolt", "x": 3, "y": 3, "color": col},
-        {"op": "text", "x": 14, "y": 2, "text": f"CPU {int(round(cpu))}%", "color": "warmwhite", "font": "3x5"},
-        {"op": "progress", "x": 14, "y": 9, "w": 54, "h": 4, "value": cpu, "max": 100, "color": col, "bg": "#18202a"},
+        {"op": "icon", "name": "bolt", "x": 3, "y": top + 3, "color": col},
+        {"op": "text", "x": TEXT_X, "y": top + 2, "text": f"CPU {int(round(cpu))}%", "color": "warmwhite", "font": "3x5"},
+        {"op": "progress", "x": TEXT_X, "y": top + 9, "w": max(1, w - TEXT_X - 4), "h": 4, "value": cpu, "max": 100, "color": col, "bg": "#18202a"},
     ]
 
 
-def make_git_card(repo: str) -> Callable[[], List[Dict[str, Any]]]:
-    def _card() -> List[Dict[str, Any]]:
+def make_git_card(repo: str) -> CardFn:
+    def _card(size: Size) -> List[Dict[str, Any]]:
+        _, _, top, max_chars = card_frame(size)
         try:
             br = subprocess.check_output(["git", "-C", repo, "rev-parse", "--abbrev-ref", "HEAD"], text=True, timeout=2.0).strip()
             st = subprocess.check_output(["git", "-C", repo, "status", "--porcelain"], text=True, timeout=2.0)
@@ -126,18 +155,19 @@ def make_git_card(repo: str) -> Callable[[], List[Dict[str, Any]]]:
         sub = f"{dirty} MOD" if dirty else "CLEAN"
         return [
             {"op": "clear", "color": "#060a0e"},
-            {"op": "icon", "name": icon, "x": 3, "y": 3, "color": col},
-            {"op": "text", "x": 14, "y": 2, "text": br[:11], "color": "warmwhite", "font": "3x5"},
-            {"op": "text", "x": 14, "y": 9, "text": sub, "color": col, "font": "3x5"},
+            {"op": "icon", "name": icon, "x": 3, "y": top + 3, "color": col},
+            {"op": "text", "x": TEXT_X, "y": top + 2, "text": br[:max_chars], "color": "warmwhite", "font": "3x5"},
+            {"op": "text", "x": TEXT_X, "y": top + 9, "text": sub[:max_chars], "color": col, "font": "3x5"},
         ]
 
     return _card
 
 
-def make_weather_card(city: Optional[str]) -> Callable[[], List[Dict[str, Any]]]:
+def make_weather_card(city: Optional[str]) -> CardFn:
     cache: Dict[str, Any] = {"ts": 0.0, "temp": "--", "cond": "SUNNY"}
 
-    def _card() -> List[Dict[str, Any]]:
+    def _card(size: Size) -> List[Dict[str, Any]]:
+        _, _, top, max_chars = card_frame(size)
         now = time.monotonic()
         if city and (now - cache["ts"] > 600.0):
             try:
@@ -153,46 +183,48 @@ def make_weather_card(city: Optional[str]) -> Callable[[], List[Dict[str, Any]]]
             except Exception:
                 pass
         icon = "sun" if "SUN" in cache["cond"] or "CLEAR" in cache["cond"] else "moon"
-        label = (city or "LOCAL").upper()[:9]
+        label = (city or "LOCAL").upper()[:max_chars]
         return [
             {"op": "clear", "color": "#050a14"},
-            {"op": "icon", "name": icon, "x": 3, "y": 3, "color": "#ffcc33"},
-            {"op": "text", "x": 14, "y": 2, "text": label, "color": "#88aacc", "font": "3x5"},
-            {"op": "text", "x": 14, "y": 9, "text": f"{cache['temp']} {cache['cond']}"[:14], "color": "warmwhite", "font": "3x5"},
+            {"op": "icon", "name": icon, "x": 3, "y": top + 3, "color": "#ffcc33"},
+            {"op": "text", "x": TEXT_X, "y": top + 2, "text": label, "color": "#88aacc", "font": "3x5"},
+            {"op": "text", "x": TEXT_X, "y": top + 9, "text": f"{cache['temp']} {cache['cond']}"[:max_chars], "color": "warmwhite", "font": "3x5"},
         ]
 
     return _card
 
 
-def make_custom_card(spec: str) -> Tuple[str, Callable[[], List[Dict[str, Any]]]]:
+def make_custom_card(spec: str) -> Tuple[str, CardFn]:
     parts = [p.strip() for p in spec.split("|")]
     title = parts[0] if len(parts) > 0 else "INFO"
     value = parts[1] if len(parts) > 1 else ""
     color = parts[2] if len(parts) > 2 and parts[2] else "cyan"
     icon = parts[3] if len(parts) > 3 and parts[3] else "bell"
 
-    def _card() -> List[Dict[str, Any]]:
+    def _card(size: Size) -> List[Dict[str, Any]]:
+        _, _, top, max_chars = card_frame(size)
         return [
             {"op": "clear", "color": "#06080f"},
-            {"op": "icon", "name": icon, "x": 3, "y": 3, "color": color},
-            {"op": "text", "x": 14, "y": 2, "text": title[:11], "color": "#99aabb", "font": "3x5"},
-            {"op": "text", "x": 14, "y": 9, "text": value[:12], "color": color, "font": "3x5"},
+            {"op": "icon", "name": icon, "x": 3, "y": top + 3, "color": color},
+            {"op": "text", "x": TEXT_X, "y": top + 2, "text": title[:max_chars], "color": "#99aabb", "font": "3x5"},
+            {"op": "text", "x": TEXT_X, "y": top + 9, "text": value[:max_chars], "color": color, "font": "3x5"},
         ]
 
     return f"custom:{title}", _card
 
 
-def add_page_dots(ops: List[Dict[str, Any]], idx: int, total: int) -> List[Dict[str, Any]]:
+def add_page_dots(ops: List[Dict[str, Any]], idx: int, total: int, size: Size) -> List[Dict[str, Any]]:
     if total <= 1:
         return ops
+    w, h = size
     out = list(ops)
     span = total * 4 - 2
-    x0 = max(2, (72 - span) // 2)
+    x0 = max(2, (w - span) // 2)
     for i in range(total):
         out.append({
             "op": "rect",
             "x": x0 + i * 4,
-            "y": 15,
+            "y": h - 1,
             "w": 2,
             "h": 1,
             "fill": "#ffffff" if i == idx else "#2c3440",
@@ -215,7 +247,7 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Print card payloads without contacting markee")
     args = parser.parse_args()
 
-    registry: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
+    registry: Dict[str, CardFn] = {
         "clock": card_clock,
         "date": card_date,
         "sys": card_sys,
@@ -223,7 +255,7 @@ def main() -> int:
         "weather": make_weather_card(args.city),
     }
 
-    cards: List[Tuple[str, Callable[[], List[Dict[str, Any]]]]] = []
+    cards: List[Tuple[str, CardFn]] = []
     for name in [c.strip().lower() for c in args.cards.split(",") if c.strip()]:
         if name in registry:
             cards.append((name, registry[name]))
@@ -239,18 +271,24 @@ def main() -> int:
 
     client = Client(args.url, args.token)
     last_event_id = 0
+    size: Size = (72, 16)
     if not args.dry_run:
+        try:
+            size = client.display_size()
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            print(f"Error: cannot read display size from {args.url}/info ({exc})", file=sys.stderr)
+            return 1
         try:
             last_event_id = int(client.poll_events(0, wait_s=0.0).get("last_id", 0))
         except Exception:
             pass
-        print(f"Carousel started on {args.url} ({len(cards)} cards, {args.interval:.1f}s each; Space/bezel advances)")
+        print(f"Carousel started on {args.url} at {size[0]}x{size[1]} ({len(cards)} cards, {args.interval:.1f}s each; Space/bezel advances)")
 
     idx = 0
     try:
         while True:
             name, builder = cards[idx]
-            ops = add_page_dots(builder(), idx, len(cards))
+            ops = add_page_dots(builder(size), idx, len(cards), size)
             if args.dry_run:
                 print(f"[card {idx + 1}/{len(cards)}] {name}: {len(ops)} draw ops")
             else:

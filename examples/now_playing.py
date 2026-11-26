@@ -326,6 +326,15 @@ def poll_player() -> Tuple[str, str, str, str, str]:
     return poll_linux()
 
 
+def fetch_display_size(base_url: str, token: Optional[str]) -> Tuple[int, int]:
+    """Return the live (width, height) of the matrix from GET /info."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    req = urllib.request.Request(f"{base_url.rstrip('/')}/info", headers=headers)
+    with urllib.request.urlopen(req, timeout=5.0) as resp:
+        info = json.loads(resp.read().decode("utf-8"))
+    return int(info.get("width", 72)), int(info.get("height", 16))
+
+
 def post_draw(base_url: str, token: Optional[str], ops: List[Dict[str, Any]], transition: Optional[str] = None) -> None:
     headers = {"Content-Type": "application/json"}
     if token:
@@ -342,6 +351,7 @@ def post_draw(base_url: str, token: Optional[str], ops: List[Dict[str, Any]], tr
 
 
 def build_ops(
+    size: Tuple[int, int],
     state: str,
     label: str,
     speed: float,
@@ -349,11 +359,15 @@ def build_ops(
     icon_color: str,
     accent_color: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    w, h = size
+    # Icon, equalizer and ticker sit in a 16-row band centered vertically; the
+    # ambient accent strip always spans the full width of the bottom two rows.
+    top = max(0, (h - 16) // 2)
     if state == "idle" or not label:
         return [
             {"op": "clear"},
-            {"op": "icon", "name": "music", "x": 3, "y": 4, "color": "#445566"},
-            {"op": "text", "x": 14, "y": 4, "text": "NO MUSIC", "color": "#556677", "font": "prop"},
+            {"op": "icon", "name": "music", "x": 3, "y": max(0, (h - 8) // 2), "color": "#445566"},
+            {"op": "text", "x": 14, "y": max(0, (h - 7) // 2), "text": "NO MUSIC", "color": "#556677", "font": "prop"},
         ]
 
     playing = state == "playing"
@@ -361,19 +375,19 @@ def build_ops(
 
     ops: List[Dict[str, Any]] = [
         {"op": "clear", "color": "#05070c"},
-        {"op": "icon", "name": "music" if playing else "pause", "x": 2, "y": 1, "color": effective_icon_color},
-        {"op": "line", "x1": 11, "y1": 1, "x2": 11, "y2": 12, "color": "#1e2736"},
+        {"op": "icon", "name": "music" if playing else "pause", "x": 2, "y": top + 1, "color": effective_icon_color},
+        {"op": "line", "x1": 11, "y1": top + 1, "x2": 11, "y2": top + 12, "color": "#1e2736"},
     ]
 
     # Miniature equalizer bars cleanly between icon (y=1..8) and bottom accent strip (y=14..15)
     eq_heights = [2, 4, 2, 3] if playing else [1, 1, 1, 1]
-    for i, h in enumerate(eq_heights):
+    for i, bar_h in enumerate(eq_heights):
         ops.append({
             "op": "rect",
             "x": 2 + i * 2,
-            "y": 14 - h,
+            "y": top + 14 - bar_h,
             "w": 1,
-            "h": h,
+            "h": bar_h,
             "fill": effective_icon_color if playing else "#444a55",
         })
 
@@ -384,30 +398,30 @@ def build_ops(
         ops.append({
             "op": "line",
             "x1": 0,
-            "y1": 14,
-            "x2": 71,
-            "y2": 14,
+            "y1": h - 2,
+            "x2": w - 1,
+            "y2": h - 2,
             "color": accent_color,
             "alpha": glow_alpha,
         })
         ops.append({
             "op": "line",
             "x1": 0,
-            "y1": 15,
-            "x2": 71,
-            "y2": 15,
+            "y1": h - 1,
+            "x2": w - 1,
+            "y2": h - 1,
             "color": accent_color,
             "alpha": bar_alpha,
         })
 
     text_op: Dict[str, Any] = {
         "op": "text",
-        "x": 70 if playing else 14,
-        "y": 3,
+        "x": w - 2 if playing else 14,
+        "y": top + 3,
         "text": label,
         "color": color if playing else "#9aa5b1",
         "font": "prop",
-        "clip": [13, 1, 58, 12],
+        "clip": [13, top + 1, max(1, w - 14), 12],
     }
     if playing:
         text_op["scroll"] = True
@@ -437,9 +451,15 @@ def main() -> int:
     ]
     demo_idx = 0
 
+    try:
+        size = fetch_display_size(args.url, args.token)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"Error: cannot read display size from {args.url}/info ({exc})", file=sys.stderr)
+        return 1
+
     last_key: Optional[Tuple[str, str, Optional[str]]] = None
     accent_cache: Dict[str, Optional[str]] = {}
-    print(f"Now Playing ticker connected to {args.url} (Ctrl+C to stop)")
+    print(f"Now Playing ticker connected to {args.url} at {size[0]}x{size[1]} (Ctrl+C to stop)")
 
     try:
         while True:
@@ -466,7 +486,7 @@ def main() -> int:
             icon_color = args.icon_color or accent or DEFAULT_ACCENT
             key = (state, label, accent)
             if key != last_key:
-                ops = build_ops(state, label, args.speed, args.color, icon_color, accent_color=accent)
+                ops = build_ops(size, state, label, args.speed, args.color, icon_color, accent_color=accent)
                 try:
                     post_draw(args.url, args.token, ops, transition="fade" if last_key is not None else None)
                     acc_note = f" [accent {accent}]" if accent else ""

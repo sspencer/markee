@@ -312,7 +312,7 @@ Zero-dependency Python 3 integrations live in `examples/`:
 - [`examples/git_watch.py`](examples/git_watch.py) — Local Git + test runner watcher (`--cmd "make test"`) or GitHub Actions CI monitor (`--github owner/repo`) with pass/fail notifications and melodies
 - [`examples/carousel.py`](examples/carousel.py) — Rotating status carousel daemon (`clock`, `date`, `sys`, `git`, `weather`, custom `--card` slides) with smooth transitions and `Space`/bezel advance (`python3 examples/carousel.py --cards clock,date,sys,git`)
 
-Every applet except `demo.py` takes `--url` and `--token`, or reads `MARKEE_URL` (or `MARKEE_HOST` + `MARKEE_PORT`) and `MARKEE_TOKEN`; `demo.py` takes `--host` and `--port`. Run any script with `--help` for its full options. Sample 72×16 and 16×16 GIFs for `/animate` and `markee gif` are in `examples/*.gif`.
+Every applet except `demo.py` takes `--url` and `--token`, or reads `MARKEE_URL` (or `MARKEE_HOST` + `MARKEE_PORT`) and `MARKEE_TOKEN`; `demo.py` takes `--host` and `--port`. Each applet reads the display size from `GET /info` at startup (the MCP server checks it on every call) and lays itself out to fit, so it works at any `--resolution`. The layouts are designed around 72×16, and very small displays will crop content. Run any script with `--help` for its full options. Sample 72×16 and 16×16 GIFs for `/animate` and `markee gif` are in `examples/*.gif`.
 
 To register the MCP server with an MCP client such as Claude Desktop or Cursor:
 

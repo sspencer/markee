@@ -31,7 +31,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 SERVER_INFO = {"name": "markee-mcp", "version": "1.0.0"}
@@ -203,6 +203,28 @@ class MarkeeClient:
         return self.request("POST", path, body=data, content_type="application/json")
 
 
+def display_size(client: MarkeeClient) -> Tuple[int, int]:
+    """Return the live (width, height) of the matrix from GET /info.
+
+    Queried on every layout-dependent tool call, so the layout stays correct
+    even if markee is restarted with a different --resolution.
+    """
+    info = client.request("GET", "/info")
+    if not isinstance(info, dict):
+        return 72, 16
+    return max(1, int(info.get("width", 72))), max(1, int(info.get("height", 16)))
+
+
+def font_height(font: str) -> int:
+    """Glyph height in pixels for a markee font name."""
+    f = font.lower()
+    if f in ("3x5", "4x6", "small"):
+        return 5
+    if f in ("8x8", "large", "bold"):
+        return 8
+    return 7  # 5x7 / 6x8 / prop
+
+
 def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
     if name == "markee_info":
         return client.request("GET", "/info")
@@ -243,6 +265,9 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         font = str(args.get("font", "prop"))
         scroll = bool(args.get("scroll", False))
         speed = float(args.get("speed", 28))
+        w, h = display_size(client)
+        text_y = max(0, (h - font_height(font)) // 2)
+        right = w - 2  # right edge of the text area (2 px margin)
 
         ops: List[Dict[str, Any]] = []
         if bg:
@@ -250,19 +275,19 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         else:
             ops.append({"op": "clear"})
         if border:
-            ops.append({"op": "rect", "x": 0, "y": 0, "w": 72, "h": 16, "color": str(border), "radius": 2})
+            ops.append({"op": "rect", "x": 0, "y": 0, "w": w, "h": h, "color": str(border), "radius": 2})
 
         text_x = 2
         clip_x = 2
         if icon:
-            ops.append({"op": "icon", "name": str(icon), "x": 3, "y": 4, "color": icon_color})
+            ops.append({"op": "icon", "name": str(icon), "x": 3, "y": max(0, (h - 8) // 2), "color": icon_color})
             text_x = 13
             clip_x = 13
 
         text_op: Dict[str, Any] = {
             "op": "text",
-            "x": 70 if scroll else text_x,
-            "y": 4,
+            "x": right if scroll else text_x,
+            "y": text_y,
             "text": text,
             "color": color,
             "font": font,
@@ -270,9 +295,9 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         if scroll:
             text_op["scroll"] = True
             text_op["speed"] = speed
-            text_op["clip"] = [clip_x, 1, 70 - clip_x, 14]
+            text_op["clip"] = [clip_x, 1, max(1, right - clip_x), max(1, h - 2)]
         else:
-            text_op["w"] = 70 - text_x
+            text_op["w"] = max(1, right - text_x)
             text_op["align"] = "left" if icon else "center"
         ops.append(text_op)
 
@@ -294,25 +319,30 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         text_color = str(args.get("text_color", "warmwhite"))
         icon = args.get("icon")
 
+        w, h = display_size(client)
+        # Label row + 5 px bar form a 13-row block centered vertically.
+        top = max(0, (h - 13) // 2)
+        right = w - 2
         ops: List[Dict[str, Any]] = [{"op": "clear"}]
         left = 2
         if icon:
-            ops.append({"op": "icon", "name": str(icon), "x": 2, "y": 4, "color": color})
+            ops.append({"op": "icon", "name": str(icon), "x": 2, "y": max(0, (h - 8) // 2), "color": color})
             left = 12
+        max_chars = max(1, (right - left + 1) // 4 - 5)  # leave room for the right-aligned "100%"
         pct = int(round(max(0.0, min(1.0, val / max_val if max_val > 0 else 0.0)) * 100))
         ops.append({
             "op": "text",
             "x": left,
-            "y": 1,
-            "text": label[:10],
+            "y": top,
+            "text": label[:max_chars],
             "color": text_color,
             "font": "3x5",
         })
         ops.append({
             "op": "text",
             "x": left,
-            "y": 1,
-            "w": 70 - left,
+            "y": top,
+            "w": max(1, right - left),
             "align": "right",
             "text": f"{pct}%",
             "color": color,
@@ -321,8 +351,8 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         ops.append({
             "op": "progress",
             "x": left,
-            "y": 9,
-            "w": 70 - left,
+            "y": top + 8,
+            "w": max(1, right - left),
             "h": 5,
             "value": val,
             "max": max_val,
@@ -349,13 +379,17 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         bar = bool(args.get("bar", True))
         sound = str(args.get("sound", "chime"))
         label = args.get("label")
+        w, h = display_size(client)
+        digits_y = max(0, (h - 7) // 2)
         ops: List[Dict[str, Any]] = [{"op": "clear"}]
         if label:
-            ops.append({"op": "text", "x": 2, "y": 5, "text": str(label)[:6], "color": "warmwhite", "font": "3x5"})
+            # "00:00" in prop is ~23 px wide; give the label whatever is left.
+            label_chars = max(1, (w - 2 - 2 - 26) // 4)
+            ops.append({"op": "text", "x": 2, "y": digits_y + 1, "text": str(label)[:label_chars], "color": "warmwhite", "font": "3x5"})
             ops.append({
                 "op": "countdown",
-                "x": 70,
-                "y": 4,
+                "x": w - 2,
+                "y": digits_y,
                 "align": "right",
                 "seconds": secs,
                 "color": color,
@@ -366,7 +400,7 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         else:
             ops.append({
                 "op": "countdown",
-                "y": 4,
+                "y": digits_y,
                 "align": "center",
                 "seconds": secs,
                 "color": color,
@@ -380,9 +414,10 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         fmt_map = {"HH:MM:SS": "24h", "HH:MM": "24hm"}
         fmt = fmt_map.get(raw_fmt, raw_fmt)
         color = str(args.get("color", "warmwhite"))
+        _, h = display_size(client)
         ops = [
             {"op": "clear"},
-            {"op": "clock", "y": 4, "align": "center", "format": fmt, "color": color},
+            {"op": "clock", "y": max(0, (h - 7) // 2), "align": "center", "format": fmt, "color": color},
         ]
         return client.post_json("/draw", ops)
 
