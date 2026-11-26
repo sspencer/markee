@@ -4,13 +4,15 @@
 #include <stdbool.h>
 
 /* Return true if arg is a client CLI subcommand ("say", "notify", "gif", "timer",
- * "clock", "alert", "clear", "info"). */
+ * "clock", "alert", "clear", "info", "draw"). */
 bool cli_is_subcommand(const char *arg);
 
 /* Parse a human duration string such as "90", "90s", "25m", "1h30m" into seconds (> 0). */
 bool cli_parse_duration_sec(const char *s, double *out_sec);
 
-/* Execute a client CLI subcommand against a running markee server. Returns exit code (0 = ok). */
+/* Execute a client CLI subcommand against a running markee server. Returns exit code (0 = ok).
+ * The server address and token come from (highest precedence first) -H/-p/--token flags,
+ * MARKEE_HOST/MARKEE_PORT/MARKEE_TOKEN, then config.ini (--config PATH / --no-config). */
 int cli_run(int argc, char **argv);
 
 #endif /* MARKEE_CLI_H */

@@ -23,7 +23,7 @@ A running backlog of product, API, integration, and engineering ideas for `marke
 - [x] **Built-in autonomous widgets (`clock`, `countdown`, `progress`, `sparkline`):**
   - Server-side live `clock` and `countdown` timer ops (with optional bottom progress bar and completion alert sound) tick autonomously at 60 Hz.
   - Compact `progress` bar and `sparkline` primitives for dashboards.
-- [x] **Scene transitions (`transition: "fade"|"slide-left"|"slide-up"|"wipe"`):** Supported via `?transition=<type>&transition_ms=<50..5000>` on `POST /draw` for smooth 60 Hz crossfades, slides, and wipes.
+- [x] **Scene transitions (`transition: "fade"|"dip"|"slide-left"|"slide-right"|"slide-up"|"slide-down"|"wipe"|"wipe-left"|"wipe-up"|"wipe-down"|"split"|"center-out"|"blinds"|"dissolve"`):** Supported via `?transition=<type>&transition_ms=<50..5000>` on `POST /draw` for smooth 60 Hz crossfades, slides, wipes, and a center-out iris reveal.
 - [x] **Animation playback controls:** Speed multiplier (`?speed=0.1..10.0`, `POST /animate/speed`), `POST /animate/pause` & `POST /animate/resume`, and scaling modes (`?fit=crop|contain|stretch`) on `/animate`.
 - [x] **Built-in monochrome pixel icon set:** 16 named 8×8 icons (`check`, `cross`, `bell`, `wifi`, `flame`, `play`, `pause`, `battery`, `heart`, `star`, `clock`, `sun`, `moon`, `mail`, `bolt`, `music`) via `"op": "icon"` with optional `scale` (`1..4`).
 - [x] **Shape alpha / gradients:** Optional `"alpha"` (`0.0..1.0`) on shapes/icons/gradients and linear `"op": "gradient"` (`horizontal`/`vertical`).

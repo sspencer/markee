@@ -150,20 +150,22 @@ static void print_usage(const char *prog) {
            "  Q / ESC                 Quit\n\n"
            "Client subcommands (talk to a running markee server):\n"
            "  %s say <text> [--color C] [--bg C] [--font F] [--scroll] [--speed PX/S]\n"
-           "        [--transition T] [--sound S|--chime|--ding|--bell] [--volume 0..100]\n"
+           "        [--transition T [--transition-ms MS]] [--sound S|--chime|--ding|--bell] [--volume 0..100]\n"
            "  %s notify <text> [--ttl S] [--color C] [--bg C] [--border C] [--font F] [--sound S]\n"
            "  %s gif <file.gif> [--fill C] [--fit crop|contain|stretch] [--speed S] [--loop N]\n"
            "  %s timer <duration> [--color C] [--bg C] [--no-bar] [--sound S]   # e.g. 25m, 90s, 1h30m\n"
            "  %s clock [--color C] [--bg C] [--format 24h|24hm|12h|12hm]\n"
            "  %s alert [ding|chime|bell] [--volume 0..100]\n"
+           "  %s draw [ops.json|-|'[...]'] [--transition T [--transition-ms MS]]   # raw /draw ops; stdin when piped\n"
            "  %s clear | info\n"
-           "  (all accept -H/--host, -p/--port, --token; or MARKEE_HOST, MARKEE_PORT, MARKEE_TOKEN)\n\n"
+           "  (all accept -H/--host, -p/--port, --token, or MARKEE_HOST, MARKEE_PORT, MARKEE_TOKEN;\n"
+           "   otherwise host/port/token come from config.ini: --config PATH, --no-config)\n\n"
            "Examples:\n"
            "  %s                           # Default 72x16 square LEDs at 1.0x zoom\n"
            "  %s --circle --zoom 2         # 72x16 circular LEDs at 2x size\n"
            "  %s -m \"#ffbf00\"              # Monochrome amber phosphor filter\n"
            "  %s -r 128x32 -z 0.75         # Custom 128x32 LED matrix at 0.75x zoom\n",
-           prog, prog, prog, prog, prog, prog, prog,
+           prog, prog, prog, prog, prog, prog, prog, prog,
            prog, prog, prog, prog);
 }
 

@@ -244,6 +244,8 @@ When the server runs with `--token`, open `http://127.0.0.1:8080/ui?token=<secre
 
 ### POST /draw
 
+> From the shell, `markee draw ops.json` (or `cat ops.json | markee draw`) sends the same op list to the running display.
+
 **Methods:** `POST`, `PUT` · **Aliases:** `/api/draw`
 
 Executes a **JSON array** of one or more drawing operations in order, composited onto the current framebuffer.
@@ -271,7 +273,14 @@ curl -X POST http://127.0.0.1:8080/draw -H "Content-Type: application/json" -d '
 
 **Optional query parameters on `POST /draw`:**
 - `?ttl=<sec>` (`0..86400`) — display the batch temporarily and automatically restore the previous display state when the timer expires.
-- `?transition=<fade|slide-left|slide-up|wipe>&transition_ms=<50..5000>` — animate the switch from the previous frame to the new frame (default `250` ms).
+- `?transition=<fade|dip|slide-left|slide-right|slide-up|slide-down|wipe|wipe-left|wipe-up|wipe-down|split|center-out|blinds|dissolve>&transition_ms=<50..5000>` — animate the switch from the previous frame to the new frame (default `250` ms). Effects:
+  - `fade` (alias `crossfade`): crossfade; `dip` (alias `dip-black`): fade out to black, then fade the new frame in.
+  - `slide-left|right|up|down` (alias `slide` = `slide-left`): the new frame pushes the old one off in that direction (eased).
+  - `wipe` (alias `wipe-right`), `wipe-left`, `wipe-up`, `wipe-down`: a hard edge sweeps across in that direction.
+  - `split`: two edges open from the vertical center line out to the left and right edges.
+  - `center-out` (alias `iris`): an ellipse grows from the center until it covers the corners.
+  - `blinds`: every 8-column strip opens left to right at once, like shutters.
+  - `dissolve`: pixels switch to the new frame in a fixed pseudo-random order.
 
 ### POST /notify
 

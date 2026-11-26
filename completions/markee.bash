@@ -12,7 +12,7 @@ _markee() {
         cword=$COMP_CWORD
     fi
 
-    local subcommands="say notify gif timer clock alert clear info"
+    local subcommands="say notify gif timer clock alert draw clear info"
     local server_opts="-r --resolution -z --zoom --square --circle -s --shape -m --monochrome --mono -H --host -p --port --token --dpi --always-on-top --topmost --no-always-on-top --borderless --frameless --no-borderless --position --pos --corner --case --idle-dim --idle-brightness --demo --blank --mute --no-audio --headless --config --no-config --save-position -h --help"
 
     local positions="nw n ne w c e sw s se center top-left top top-right left right bottom-left bottom bottom-right"
@@ -22,14 +22,14 @@ _markee() {
     local sounds="ding chime bell"
     local fonts="4x6 5x7 6x8 8x8 prop"
     local fits="crop contain stretch"
-    local transitions="fade slide-left slide-up wipe"
+    local transitions="fade dip slide-left slide-right slide-up slide-down wipe wipe-left wipe-up wipe-down split center-out blinds dissolve"
     local clock_formats="24h 24hm 12h 12hm"
 
     # Determine whether a client subcommand is active at position 1
     local subcmd=""
     if (( cword >= 2 )); then
         case "${words[1]}" in
-            say|notify|gif|timer|clock|alert|clear|info)
+            say|notify|gif|timer|clock|alert|draw|clear|info)
                 subcmd="${words[1]}"
                 ;;
         esac
@@ -81,17 +81,17 @@ _markee() {
             COMPREPLY=( $(compgen -W "72x16 128x32 64x32 64x64 32x8" -- "$cur") )
             return
             ;;
-        -H|--host|-p|--port|--token|--dpi|-z|--zoom|--idle-dim|--idle-brightness|--ttl|--speed|--loop|--volume)
+        -H|--host|-p|--port|--token|--dpi|-z|--zoom|--idle-dim|--idle-brightness|--ttl|--speed|--loop|--volume|--transition-ms)
             return
             ;;
     esac
 
     # Subcommand-specific completions
     if [[ -n "$subcmd" ]]; then
-        local common_client="-H --host -p --port --token"
+        local common_client="-H --host -p --port --token --config --no-config"
         case "$subcmd" in
             say)
-                COMPREPLY=( $(compgen -W "$common_client -c --color --bg --font --scroll --speed --transition --sound --ding --chime --bell --volume" -- "$cur") )
+                COMPREPLY=( $(compgen -W "$common_client -c --color --bg --font --scroll --speed --transition --transition-ms --sound --ding --chime --bell --volume" -- "$cur") )
                 ;;
             notify)
                 COMPREPLY=( $(compgen -W "$common_client --ttl -c --color --bg --border --font --sound --ding --chime --bell" -- "$cur") )
@@ -118,6 +118,13 @@ _markee() {
                     COMPREPLY=( $(compgen -W "$common_client --volume --ding --chime --bell" -- "$cur") )
                 else
                     COMPREPLY=( $(compgen -W "$sounds" -- "$cur") )
+                fi
+                ;;
+            draw)
+                if [[ "$cur" == -* ]]; then
+                    COMPREPLY=( $(compgen -W "$common_client --transition --transition-ms -" -- "$cur") )
+                else
+                    COMPREPLY=( $(compgen -f -X '!*.[jJ][sS][oO][nN]' -- "$cur") $(compgen -d -- "$cur") )
                 fi
                 ;;
             clear|info)
