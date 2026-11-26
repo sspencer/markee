@@ -50,3 +50,5 @@ Build a portable `build/markee-<version>-<os>-<arch>.tar.gz`:
 ```bash
 make tarball
 ```
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds tarballs for macOS arm64, Linux x86_64, and Linux aarch64. raylib is linked statically, so the Linux binaries need only libc, libX11, and an OpenGL driver. The workflow attaches the tarballs and `SHA256SUMS` to a GitHub Release.

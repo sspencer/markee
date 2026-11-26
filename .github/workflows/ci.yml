@@ -2,47 +2,74 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [master]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RAYLIB_VERSION: "6.2"
+  WARN_FLAGS: -Wall -Wextra -Wpedantic -Werror
+  UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
 
 jobs:
-  build-and-test:
-    name: Build, Test & Sanitize (${{ matrix.os }})
+  build-test:
+    name: ${{ matrix.os }} / ${{ matrix.cc }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
-
+        include:
+          - { os: macos-latest, cc: clang }
+          - { os: ubuntu-latest, cc: gcc }
+          - { os: ubuntu-latest, cc: clang }
+    env:
+      CC: ${{ matrix.cc }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install raylib (macOS)
         if: runner.os == 'macOS'
         run: brew install raylib pkg-config
 
-      - name: Install raylib (Ubuntu)
+      - name: Install raylib (Linux, from source)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libraylib-dev
+          if [ "$CC" = clang ]; then sudo apt-get update && sudo apt-get install -y clang; fi
+          .github/scripts/install-raylib.sh "$RAYLIB_VERSION"
 
-      - name: Build with strict warnings (-Werror)
-        run: make clean && make WARN_FLAGS="-Wall -Wextra -Wpedantic -Werror" all test_api
+      - name: Build (strict warnings)
+        run: make CC="$CC" WARN_FLAGS="$WARN_FLAGS" all test_api
 
-      - name: Run C unit & socket API tests
+      - name: Unit + integration tests
         run: ./test_api
 
-      - name: Run AddressSanitizer + UndefinedBehaviorSanitizer tests
-        env:
-          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: make WARN_FLAGS="-Wall -Wextra -Wpedantic -Werror" sanitize
+      - name: ASan + UBSan
+        run: make CC="$CC" WARN_FLAGS="$WARN_FLAGS" sanitize
 
-      - name: Run standalone parser fuzz smoke tests (ASan + UBSan)
-        env:
-          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: make WARN_FLAGS="-Wall -Wextra -Wpedantic -Werror" fuzz-smoke
+      - name: Fuzz smoke
+        run: make CC="$CC" WARN_FLAGS="$WARN_FLAGS" fuzz-smoke
 
-      - name: Validate Python example applets
+      - name: CLI smoke
+        run: ./markee --help | head -1
+
+  lint:
+    name: Examples & completions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Byte-compile Python examples
         run: python3 -m py_compile examples/*.py
+      - name: Shell syntax
+        run: |
+          sudo apt-get update && sudo apt-get install -y zsh fish shellcheck
+          bash -n completions/markee.bash
+          zsh -n completions/_markee
+          fish --no-execute completions/markee.fish
+          shellcheck -S warning packaging/*.sh .github/scripts/*.sh

@@ -2066,6 +2066,7 @@ static void test_draw_image_op(void) {
     {
         /* Restore an active animated GIF to verify rollback preserves it */
         char *setup = malloc(strlen(b64) + 128);
+        assert(setup != NULL);
         sprintf(setup, "[{\"op\":\"clear\"},{\"op\":\"image\",\"data\":\"%s\"}]", b64);
         HttpResp r = do_request(port, "POST", "/draw", "application/json", setup, strlen(setup));
         assert(r.status == 200);
@@ -2075,6 +2076,7 @@ static void test_draw_image_op(void) {
 
         /* Old 'gif' op name is no longer accepted */
         char *old_op = malloc(strlen(b64) + 128);
+        assert(old_op != NULL);
         sprintf(old_op, "[{\"op\":\"gif\",\"data\":\"%s\"}]", b64);
         r = do_request(port, "POST", "/draw", "application/json", old_op, strlen(old_op));
         assert(r.status == 400);
@@ -2100,6 +2102,7 @@ static void test_draw_image_op(void) {
         free(r.body);
 
         char *bad_loop = malloc(strlen(b64) + 128);
+        assert(bad_loop != NULL);
         sprintf(bad_loop, "[{\"op\":\"image\",\"data\":\"%s\",\"loop\":-2}]", b64);
         r = do_request(port, "POST", "/draw", "application/json", bad_loop, strlen(bad_loop));
         assert(r.status == 400);
@@ -2107,6 +2110,7 @@ static void test_draw_image_op(void) {
         free(bad_loop);
 
         char *bad_fill = malloc(strlen(b64) + 128);
+        assert(bad_fill != NULL);
         sprintf(bad_fill, "[{\"op\":\"image\",\"data\":\"%s\",\"fill\":\"notacolor\"}]", b64);
         r = do_request(port, "POST", "/draw", "application/json", bad_fill, strlen(bad_fill));
         assert(r.status == 400);
@@ -2115,6 +2119,7 @@ static void test_draw_image_op(void) {
 
         /* Atomic rollback: valid image followed by unknown op leaves previous active GIF intact */
         char *rollback = malloc(strlen(b64) + 128);
+        assert(rollback != NULL);
         sprintf(rollback, "[{\"op\":\"clear\"},{\"op\":\"image\",\"data\":\"%s\"},{\"op\":\"nope\"}]", b64);
         r = do_request(port, "POST", "/draw", "application/json", rollback, strlen(rollback));
         assert(r.status == 400);
