@@ -69,12 +69,14 @@ complete -c markee -n "__fish_seen_subcommand_from say" -l sound -x -a "$__marke
 complete -c markee -n "__fish_seen_subcommand_from say" -l ding -d "Play ding sound"
 complete -c markee -n "__fish_seen_subcommand_from say" -l chime -d "Play chime sound"
 complete -c markee -n "__fish_seen_subcommand_from say" -l bell -d "Play bell sound"
+complete -c markee -n "__fish_seen_subcommand_from say" -l volume -x -d "Alert volume (0..100)"
 
 # notify
 complete -c markee -n "__fish_seen_subcommand_from notify" -l ttl -x -d "Duration in seconds"
 complete -c markee -n "__fish_seen_subcommand_from notify" -s c -l color -x -a "$__markee_colors" -d "Text color"
 complete -c markee -n "__fish_seen_subcommand_from notify" -l bg -x -a "$__markee_colors" -d "Background color"
 complete -c markee -n "__fish_seen_subcommand_from notify" -l border -x -a "$__markee_colors" -d "Border color"
+complete -c markee -n "__fish_seen_subcommand_from notify" -l font -x -a "$__markee_fonts" -d "Bitmap font"
 complete -c markee -n "__fish_seen_subcommand_from notify" -l sound -x -a "$__markee_sounds" -d "Alert sound"
 complete -c markee -n "__fish_seen_subcommand_from notify" -l ding -d "Play ding sound"
 complete -c markee -n "__fish_seen_subcommand_from notify" -l chime -d "Play chime sound"

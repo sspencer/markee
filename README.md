@@ -19,9 +19,21 @@ It is an independent hobby project, not a BUSY Bar emulator. Its HTTP API is int
 - **Simple HTTP/1.1 API (Keep-Alive + open CORS)** — works out of the box with `curl`, Python, browser `fetch()`, Node.js, Go, or raw sockets:
   - **Atomic drawing (`POST /draw`):** batch `clear`, `pixel`, `line`, `rect` (with corner radius), `oval`, `polygon`, bitmap `text` (3 built-in fonts + smooth 60 Hz marquee scrolling), and placed `image` sprites (PNGs and static/animated GIFs)
   - **Frame I/O (`/frame`):** upload or read back lossless `W×H` PNGs, or stream raw 24-bit RGB (`3,456` bytes at 72×16) at 60 FPS
-  - **Pixels & panel controls:** read/set individual pixels, solid fills, clear, GUI brightness (`0–100%`), and a non-destructive BT.709 monochrome phosphor tint filter
-- **Built-in gentle alert sounds (`/alert`)** — 3 procedurally synthesized, non-startling chimes (`ding`, `chime`, `bell`) with volume control and overlapping playback; zero external audio files required
+  - **Rich drawing extras:** text alignment and a proportional font, clipped scrolling regions, 16 built-in 8×8 `icon`s, linear `gradient`s, and per-shape `alpha` blending
+  - **Autonomous widgets:** `progress` bars, `sparkline`s, and server-side `clock` and `countdown` ops that keep ticking with no client attached
+  - **Scene transitions & notifications:** `?transition=fade|slide-left|slide-up|wipe` on `/draw`, and `/notify` (or `/draw?ttl=`) to show a temporary banner and then restore the previous screen
+  - **Animated GIF playback (`/animate`):** crop, contain, or stretch fit, fill color, loop count, speed, and pause/resume
+  - **GIF recording (`/record`):** capture the live display to an animated GIF (also hotkey `R`)
+  - **Events (`/events`):** LED clicks, bezel taps, and key presses via JSON long-polling or Server-Sent Events
+  - **Pixels & panel controls:** read/set individual pixels, solid fills, clear, GUI brightness (`0–100%`), idle dimming (night mode), and a non-destructive BT.709 monochrome phosphor tint filter
+  - **Optional Bearer-token auth** (`--token` / `MARKEE_TOKEN`) for exposing the API beyond localhost
+- **Built-in gentle alert sounds (`/alert`)** — 3 procedurally synthesized, non-startling chimes (`ding`, `chime`, `bell`) plus custom note-sequence melodies, with volume control and overlapping playback; zero external audio files required
+- **Web Playground (`GET /ui`)** — a browser page with a live LED preview, a `/draw` JSON editor, GIF/PNG drag-and-drop, and alert buttons
+- **Desktop widget modes** — always-on-top, borderless floating window, compass/coordinate placement with position persistence, and 4 enclosure color themes
+- **Client CLI subcommands** — `markee say`, `notify`, `gif`, `timer`, `clock`, `alert`, `clear`, and `info` drive a running instance without `curl`
+- **INI config file** — `~/.config/markee/config.ini` sets defaults for every startup option
 - **Headless mode** — run `--headless` for scripts, daemons, and CI without opening a window
+- **Integrations & packaging** — zero-dependency Python applets, an MCP server for AI coding agents, a man page, Bash/Zsh/Fish completions, and macOS `.app`/Homebrew/`.deb`/tarball packaging
 
 ## Quick start
 
@@ -102,18 +114,18 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 | `--square`, `--circle` | Render LEDs as squares or circles | `--square` |
 | `-s, --shape <style>` | Pixel shape: `square` or `circle` | `square` |
 | `-m, --monochrome <color>` | Start with the BT.709 monochrome tint filter on (`#rrggbb`, `0xrrggbb`, `#rgb`, or a [color name](docs/API.md#color-formats) like `amber`). Alias: `--mono` | Off |
-| `-H, --host <addr>` | Bind address: IPv4, IPv6 (`::1`, `::`), or hostname (`localhost`). Note: the API has **no authentication** | `127.0.0.1` |
+| `-H, --host <addr>` | Bind address: IPv4, IPv6 (`::1`, `::`), or hostname (`localhost`). Without `--token` the API is unauthenticated, so keep the default loopback address unless you set a token | `127.0.0.1` |
 | `-p, --port <port>` | TCP port (`0..65535`; `0` picks a free ephemeral port). Overrides `MARKEE_PORT` | `8080` (or `$MARKEE_PORT`) |
 | `--token <secret>` | Require `Authorization: Bearer <secret>` (or `?token=`) on API requests. Overrides `MARKEE_TOKEN` | Off (or `$MARKEE_TOKEN`) |
 | `--dpi <value>` | Override monitor logical DPI (`> 0`) if EDID physical sizing is wrong | Auto-detected (fallback `110`) |
-| `--always-on-top` | Keep the GUI window floating above other windows. Alias: `--topmost` | Off |
-| `--borderless` | Floating widget mode: hide OS titlebar, transparent backdrop, drag enclosure to move. Alias: `--frameless` | Off |
-| `--position <pos>` | Initial window placement: 9-point compass (`nw`, `n`, `ne`, `w`, `c`, `e`, `sw`, `s`, `se` or full words `northwest`, `north`, …), edge/corner names (`top-left`, `top`, `left`, `center`, `right`, `bottom`, …), or pixel coordinates `X,Y` where negative values inset from the right/bottom edge (`-10,10`, `-0,-0`) and either axis may be `center` (`center,-20`). Alias: `--pos` (also supports `--position=<pos>`) | `center` |
+| `--always-on-top` | Keep the GUI window floating above other windows. Alias: `--topmost`. `--no-always-on-top` overrides a config file setting | Off |
+| `--borderless` | Floating widget mode: hide OS titlebar, transparent backdrop, drag enclosure to move. Alias: `--frameless`. `--no-borderless` overrides a config file setting | Off |
+| `--position <pos>` | Initial window placement: 9-point compass (`nw`, `n`, `ne`, `w`, `c`, `e`, `sw`, `s`, `se` or full words `northwest`, `north`, …), edge/corner names (`top-left`, `top`, `left`, `center`, `right`, `bottom`, …), or pixel coordinates `X,Y` where negative values inset from the right/bottom edge (`-10,10`, `-0,-0`) and either axis may be `center` (`center,-20`). Alias: `--pos` (also supports `--position=<pos>` and `--pos=<pos>`) | `center` |
 | `--corner <place>` | Alias for named `--position` anchors (`nw`, `n`, `ne`, `w`, `c`, `e`, `sw`, `s`, `se`, `top-left`, `left`, `right`, `bottom`, …) | `center` |
 | `--case <theme>` | Enclosure color theme: `white`, `charcoal` (`black`/`dark`), `orange`, `retro` (`beige`) | `white` |
 | `--idle-dim <sec>` | Automatically dim GUI brightness after `sec` seconds with no API writes or input | Off (`0`) |
 | `--idle-brightness <0..100>` | Dimmed GUI brightness level used by `--idle-dim` | `20` |
-| `--demo` | Start with the built-in 60 Hz demo animation instead of a blank display | Off |
+| `--demo`, `--blank` | Start with the built-in 60 Hz demo animation, or with a blank display (`--blank` overrides `demo = true` in a config file) | `--blank` |
 | `--mute` | Disable alert sound playback. Alias: `--no-audio` | Off |
 | `--headless` | Run the API server without a GUI window (60 Hz demo, scrolling text, `GET /frame`, and alert audio still run) | Off |
 | `--config <path>` | Load default options from an INI file (`$XDG_CONFIG_HOME/markee/config.ini` or `~/.config/markee/config.ini` auto-loaded when present; CLI flags override) | Auto |
@@ -134,7 +146,7 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 
 ### Configuration file
 
-`markee` automatically reads `~/.config/markee/config.ini` (or `$XDG_CONFIG_HOME/markee/config.ini`, or `--config <path>`) on startup; any CLI flags override the config file:
+`markee` automatically reads `$XDG_CONFIG_HOME/markee/config.ini` (falling back to `~/.config/markee/config.ini`) on startup when the file exists. Use `--config <path>` to load a different file, or `--no-config` to skip it.
 
 ```ini
 # ~/.config/markee/config.ini
@@ -149,20 +161,70 @@ idle_brightness = 20
 save_position = true
 ```
 
+Each line is `key = value`. Lines starting with `#` or `;` are comments, `[section]` headers are accepted and ignored, values may be wrapped in single or double quotes, and booleans accept `true`/`false`, `yes`/`no`, `on`/`off`, or `1`/`0`.
+
+| Key (aliases) | Equivalent flag | Example value |
+|---|---|---|
+| `resolution` | `--resolution` | `128x32` |
+| `zoom` | `--zoom` | `1.25` |
+| `shape` (`pixel_shape`) | `--shape` | `square`, `circle` |
+| `monochrome` (`mono`) | `--monochrome` | `amber`, `#00ff00`; `off`/`none` disables |
+| `host` | `--host` | `127.0.0.1` |
+| `port` | `--port` | `8080` |
+| `token` | `--token` | `s3cret` |
+| `dpi` | `--dpi` | `110` |
+| `always_on_top` (`topmost`) | `--always-on-top` | `true` |
+| `borderless` (`frameless`) | `--borderless` | `true` |
+| `position` (`pos`) | `--position` | `-10,10`, `ne`; `auto`/`none` clears it |
+| `corner` | `--corner` | `top-right` |
+| `case` (`case_theme`) | `--case` | `charcoal` |
+| `idle_dim` | `--idle-dim` | `300` |
+| `idle_brightness` | `--idle-brightness` | `20` |
+| `demo` | `--demo` | `true` |
+| `mute` | `--mute` | `true` |
+| `headless` | `--headless` | `false` |
+| `save_position` | `--save-position` | `true` |
+
+With `save_position = true` (or `--save-position`), `markee` writes the window's final `position = X,Y` back into the active config file on exit.
+
+**Precedence (highest first):** CLI flags → environment variables (`MARKEE_PORT`, `MARKEE_TOKEN`) → config file → built-in defaults.
+
+### Environment variables
+
+| Variable | Used by | Purpose |
+|---|---|---|
+| `MARKEE_PORT` | Server and client subcommands | Default TCP port (`8080`) |
+| `MARKEE_TOKEN` | Server and client subcommands | Bearer token to require (server) or send (client) |
+| `MARKEE_HOST` | Client subcommands | Server address to connect to (`127.0.0.1`) |
+| `MARKEE_URL` | Python examples | Full base URL; overrides `MARKEE_HOST`/`MARKEE_PORT` |
+| `XDG_CONFIG_HOME` | Server | Base directory for `markee/config.ini` (defaults to `~/.config`) |
+
 ### Client CLI subcommands
 
-You can drive a running `markee` instance directly from the same binary without crafting `curl` or JSON by hand (reads `MARKEE_HOST`, `MARKEE_PORT`, `MARKEE_TOKEN`, or `-H`/`-p`/`--token`):
+The same binary can drive a running `markee` instance, so you don't have to write `curl` commands or JSON by hand. Each subcommand reads `MARKEE_HOST`, `MARKEE_PORT`, and `MARKEE_TOKEN`, or takes `-H`/`--host`, `-p`/`--port`, and `--token`.
 
 ```bash
 ./markee say "BUILD OK!" --color green --bg "#001408" --chime
+./markee say "Deploying to production..." --scroll --speed 40 --transition slide-left
 ./markee notify "DEPLOY DONE" --ttl 5 --border green --sound bell
-./markee gif examples/cat_chase-72x16.gif --fill white
+./markee gif examples/cat_chase-72x16.gif --fill white --fit contain --speed 1.5
 ./markee timer 25m --color amber --sound chime
-./markee clock --color warmwhite
+./markee clock --color warmwhite --format 12h
 ./markee alert chime --volume 75
 ./markee clear
 ./markee info
 ```
+
+| Subcommand | What it does | Options |
+|---|---|---|
+| `say <text>` | Clears the display and draws centered text (`POST /draw`) | `-c`/`--color` (default `warmwhite`), `--bg` (default `black`), `--font` (default `6x8`), `--scroll`, `--speed <px/s>` (scroll speed, default `24`), `--transition fade\|slide-left\|slide-up\|wipe`, `--sound <name>` or `--ding`/`--chime`/`--bell`, `--volume 0..100` |
+| `notify <text>` | Shows a temporary banner, then restores the previous screen (`POST /notify`) | `--ttl <sec>` (default `5`), `-c`/`--color`, `--bg`, `--border`, `--font`, `--sound <name>` or `--ding`/`--chime`/`--bell` |
+| `gif <file.gif>` | Uploads and plays a GIF, up to 4 MiB (`POST /animate`) | `--fill <color>`, `--fit crop\|contain\|stretch` (default `crop`), `--speed <x>` (default `1.0`), `--loop <n>` |
+| `timer <duration>` | Starts an autonomous `countdown` widget. Durations look like `90s`, `25m`, or `1h30m` | `-c`/`--color`, `--bg`, `--font`, `--no-bar`, `--sound <name>` or `--ding`/`--chime`/`--bell` (plays when the timer finishes) |
+| `clock` | Starts the autonomous `clock` widget | `-c`/`--color`, `--bg`, `--font`, `--format 24h\|24hm\|12h\|12hm` (default `24h`) |
+| `alert [ding\|chime\|bell]` | Plays an alert sound (default `ding`) | `--volume 0..100` (default `100`) |
+| `clear` | Clears the display | — |
+| `info` | Prints the `GET /info` JSON | — |
 
 ### Keyboard shortcuts
 
@@ -185,27 +247,30 @@ Available when running in GUI mode:
 
 ## HTTP API
 
-`markee` serves an HTTP/1.1 API on `http://127.0.0.1:8080` by default, with persistent Keep-Alive connections and open CORS. Any write to the framebuffer automatically stops the demo animation if it is running.
+`markee` serves an HTTP/1.1 API on `http://127.0.0.1:8080` by default, with persistent Keep-Alive connections and open CORS. Start with `--token <secret>` to require `Authorization: Bearer <secret>` on every request (see [Security note](docs/API.md#security-note)). Any write to the framebuffer automatically stops the demo animation if it is running.
 
 **See [`docs/API.md`](docs/API.md) for the complete reference**—including every parameter, draw op, font, scrolling rule, color format, protocol limit, and client recipe.
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | [`/info`](docs/API.md#get-info) | Resolution, settings, audio readiness, frame counter |
-| `GET` | `/ui` | Built-in Web Playground (live LED preview, `/draw` JSON editor, drag-and-drop GIF/PNG, alerts) |
-| `POST` `PUT` | [`/draw`](docs/API.md#post-draw) | Atomic JSON batch of `clear`, `pixel`, `line`, `rect`, `oval`, `polygon`, `text`, and `image` ops (optional `?ttl=<sec>`) |
+| `GET` | [`/ui`](docs/API.md#web-playground) | Built-in Web Playground (live LED preview, `/draw` JSON editor, drag-and-drop GIF/PNG, alerts) |
+| `POST` `PUT` | [`/draw`](docs/API.md#post-draw) | Atomic JSON batch of shape, `text`, `image`, `icon`, `gradient`, and widget (`progress`, `sparkline`, `clock`, `countdown`) ops (optional `?ttl=<sec>` and `?transition=<effect>`) |
 | `GET` `POST` `PUT` `DELETE` | [`/notify`](docs/API.md#post-notify) | Show a temporary notification banner/batch for `ttl` seconds, then auto-restore prior screen |
 | `GET` | [`/frame`](docs/API.md#get-frame) | Read displayed pixels as a PNG (`/frame.rgb` or `?format=raw` for raw RGB24) |
 | `POST` `PUT` | [`/frame`](docs/API.md#post-frame) | Replace the frame with a `W×H` PNG or `W×H×3` raw RGB24 bytes (`/frame.rgb`) |
-| `GET` `POST` `PUT` `DELETE` | [`/animate`](docs/API.md#animated-gifs) | Play, inspect, or stop an animated GIF (crop/center to fit; optional `?fill=<color>` and `?loop=<n>`) |
+| `GET` `POST` `PUT` `DELETE` | [`/animate`](docs/API.md#animated-gifs) | Play, inspect, or stop an animated GIF (optional `?fit=`, `?fill=`, `?loop=`, `?speed=`) |
+| `POST` | [`/animate/pause`, `/animate/resume`, `/animate/speed`](docs/API.md#post-animate) | Pause, resume, or change the speed of GIF playback |
 | `POST` | [`/clear`](docs/API.md#delete-frame-post-clear) | Clear to black (also `DELETE /frame`) |
 | `POST` | [`/fill`](docs/API.md#post-fill) | Fill the entire display with one color |
 | `GET` `POST` `PUT` | [`/pixel`](docs/API.md#pixels) | Read or set a single pixel |
 | `GET` `POST` `PUT` | [`/brightness`](docs/API.md#post-brightness) | Read or set GUI LED brightness (`0–100`; readback unaffected) |
+| `GET` `POST` `PUT` `DELETE` | [`/idle`](docs/API.md#idle-dimming) | Read, configure, or disable idle dimming (night mode) |
 | `GET` `POST` `PUT` `DELETE` | [`/monochrome`](docs/API.md#post-monochrome) | Read or toggle the non-destructive BT.709 tint filter |
 | `POST` | [`/demo`](docs/API.md#post-demo) | Turn the built-in demo animation on or off |
-| `GET` `POST` | [`/alert`](docs/API.md#alert-sounds) | List or play the 3 gentle alert sounds (`POST /alert/1`..`3` or `ding`/`chime`/`bell`) |
-| `GET` `POST` | [`/events`](docs/API.md#get-events) | Poll or stream (SSE) LED clicks, bezel/key button presses, and frame updates |
+| `GET` `POST` | [`/alert`](docs/API.md#alert-sounds) | List or play the 3 gentle alert sounds (`POST /alert/1`..`3` or `ding`/`chime`/`bell`) or a custom `melody` |
+| `GET` `POST` | [`/events`](docs/API.md#get-events) | Poll or stream (SSE) LED clicks, bezel/key button presses, and frame updates; `POST` injects an event |
+| `GET` `POST` `DELETE` | [`/record`](docs/API.md#gif-recording) | Start, inspect, or stop recording the display to an animated GIF |
 
 ### More `curl` examples
 
@@ -247,6 +312,22 @@ Zero-dependency Python 3 integrations live in `examples/`:
 - [`examples/git_watch.py`](examples/git_watch.py) — Local Git + test runner watcher (`--cmd "make test"`) or GitHub Actions CI monitor (`--github owner/repo`) with pass/fail notifications and melodies
 - [`examples/carousel.py`](examples/carousel.py) — Rotating status carousel daemon (`clock`, `date`, `sys`, `git`, `weather`, custom `--card` slides) with smooth transitions and `Space`/bezel advance (`python3 examples/carousel.py --cards clock,date,sys,git`)
 
+Every applet except `demo.py` takes `--url` and `--token`, or reads `MARKEE_URL` (or `MARKEE_HOST` + `MARKEE_PORT`) and `MARKEE_TOKEN`; `demo.py` takes `--host` and `--port`. Run any script with `--help` for its full options. Sample 72×16 and 16×16 GIFs for `/animate` and `markee gif` are in `examples/*.gif`.
+
+To register the MCP server with an MCP client such as Claude Desktop or Cursor:
+
+```json
+{
+  "mcpServers": {
+    "markee": {
+      "command": "python3",
+      "args": ["/path/to/markee/examples/mcp_server.py"],
+      "env": { "MARKEE_URL": "http://127.0.0.1:8080" }
+    }
+  }
+}
+```
+
 Minimal stdlib-only PNG upload and readback:
 
 ```python
@@ -272,7 +353,14 @@ with open("screen.png", "wb") as f:
 make test
 ```
 
-Builds and runs `./test_api` with no GUI window and silent audio. The suite covers physical layout sizing, framebuffer/PNG round-trips, BT.709 monochrome filtering, unified color parsing, synthesized alert PCM quality, and live socket integration tests over an ephemeral localhost port (Keep-Alive, raw RGB24, custom resolutions, atomic `/draw`, `/alert`, and HTTP error handling).
+Builds and runs `./test_api` with no GUI window and silent audio. The suite covers physical layout sizing, framebuffer/PNG round-trips, BT.709 monochrome filtering, unified color parsing, synthesized alert PCM quality, the GIF decoder, INI config parsing, and live socket integration tests over an ephemeral localhost port (Keep-Alive, raw RGB24, custom resolutions, atomic `/draw` and the `image` op, widgets, `/notify` TTLs, `/animate`, `/events`, `/alert`, and HTTP error handling).
+
+```bash
+make sanitize     # same suite under AddressSanitizer + UndefinedBehaviorSanitizer
+make fuzz-smoke   # standalone fuzz harnesses for the GIF, JSON, /draw, and HTTP parsers
+```
+
+CI (`.github/workflows/ci.yml`) runs all three on macOS and Ubuntu with `-Werror`, and byte-compiles the Python examples.
 
 ## Project structure
 
@@ -289,7 +377,7 @@ markee/
 ├── docs/
 │   ├── API.md           # Complete HTTP API reference and recipes
 │   ├── markee.1         # Manual page (`man markee`)
-│   ├── ideas.md         # Completed product & engineering roadmap
+│   ├── ideas.md         # Product & engineering roadmap (all items done)
 │   └── demo.png         # Screenshot of markee running in --demo mode
 ├── include/
 │   ├── audio.h          # Procedural alert sound & custom melody synthesizer
@@ -311,7 +399,8 @@ markee/
 │   ├── now_playing.py   # macOS Spotify/Apple Music & Linux playerctl ticker
 │   ├── sysmon.py        # Live CPU sparkline, memory meter, and network monitor
 │   ├── git_watch.py     # Local Git/test runner & GitHub Actions CI watcher
-│   └── carousel.py      # Rotating status carousel daemon with transitions
+│   ├── carousel.py      # Rotating status carousel daemon with transitions
+│   └── *.gif            # Sample 72x16 and 16x16 GIFs for /animate
 ├── packaging/
 │   ├── README.md        # Packaging & distribution guide
 │   ├── build-macos-app.sh # Native macOS Markee.app bundle builder

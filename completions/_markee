@@ -39,6 +39,7 @@ _markee() {
                     '--ding[Play ding sound]' \
                     '--chime[Play chime sound]' \
                     '--bell[Play bell sound]' \
+                    '--volume[Alert volume (0..100)]:volume:' \
                     '1:text:'
                 return
                 ;;
@@ -51,6 +52,7 @@ _markee() {
                     '(-c --color)'{-c,--color}'[Text color]:color:('"${colors[*]}"')' \
                     '--bg[Background color]:color:('"${colors[*]}"')' \
                     '--border[Border color]:color:('"${colors[*]}"')' \
+                    '--font[Bitmap font]:font:('"${fonts[*]}"')' \
                     '--sound[Alert sound]:sound:('"${sounds[*]}"')' \
                     '--ding[Play ding sound]' \
                     '--chime[Play chime sound]' \

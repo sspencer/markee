@@ -126,15 +126,16 @@ and \fB\-\-token\fR.
 .BI "say " "<text>"
 Display text on the matrix. Supports \fB\-c\fR/\fB\-\-color\fR, \fB\-\-bg\fR,
 \fB\-\-font\fR (\fB4x6\fR, \fB5x7\fR, \fB6x8\fR, \fB8x8\fR, \fBprop\fR),
-\fB\-\-scroll\fR, \fB\-\-speed\fR, \fB\-\-transition\fR
+\fB\-\-scroll\fR, \fB\-\-speed\fR (scroll speed in px/s), \fB\-\-transition\fR
 (\fBfade\fR, \fBslide-left\fR, \fBslide-up\fR, \fBwipe\fR),
-and \fB\-\-sound\fR/\fB\-\-ding\fR/\fB\-\-chime\fR/\fB\-\-bell\fR.
+\fB\-\-sound\fR/\fB\-\-ding\fR/\fB\-\-chime\fR/\fB\-\-bell\fR,
+and \fB\-\-volume 0..100\fR for the sound.
 .TP
 .BI "notify " "<text>"
 Show a transient notification banner and restore the previous display after
 \fB\-\-ttl\fR seconds (default: \fB5\fR). Supports \fB\-c\fR/\fB\-\-color\fR,
-\fB\-\-bg\fR, \fB\-\-border\fR, \fB\-\-sound\fR, \fB\-\-ding\fR, \fB\-\-chime\fR,
-\fB\-\-bell\fR.
+\fB\-\-bg\fR, \fB\-\-border\fR, \fB\-\-font\fR, \fB\-\-sound\fR, \fB\-\-ding\fR,
+\fB\-\-chime\fR, \fB\-\-bell\fR.
 .TP
 .BI "gif " "<file.gif>"
 Upload and play an animated GIF via \fBPOST /animate\fR. Supports
@@ -256,6 +257,8 @@ Default TCP port for server and client subcommands (default: \fB8080\fR).
 .TP
 .B MARKEE_TOKEN
 Optional Bearer authentication token shared by server and client subcommands.
+Overrides \fBtoken\fR in the config file; \fB\-\-token\fR overrides it.
+Open the Web Playground as \fB/ui?token=\fIsecret\fR when a token is set.
 .TP
 .B XDG_CONFIG_HOME
 Base directory for \fBmarkee/config.ini\fR (defaults to \fB~/.config\fR).

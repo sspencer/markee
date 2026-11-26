@@ -91,10 +91,10 @@ _markee() {
         local common_client="-H --host -p --port --token"
         case "$subcmd" in
             say)
-                COMPREPLY=( $(compgen -W "$common_client -c --color --bg --font --scroll --speed --transition --sound --ding --chime --bell" -- "$cur") )
+                COMPREPLY=( $(compgen -W "$common_client -c --color --bg --font --scroll --speed --transition --sound --ding --chime --bell --volume" -- "$cur") )
                 ;;
             notify)
-                COMPREPLY=( $(compgen -W "$common_client --ttl -c --color --bg --border --sound --ding --chime --bell" -- "$cur") )
+                COMPREPLY=( $(compgen -W "$common_client --ttl -c --color --bg --border --font --sound --ding --chime --bell" -- "$cur") )
                 ;;
             gif)
                 if [[ "$cur" == -* ]]; then

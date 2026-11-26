@@ -2,9 +2,9 @@
 
 `markee` embeds a lightweight HTTP/1.1 server alongside the simulated LED matrix. Anything that can speak HTTP or open a TCP socket—`curl`, Python's standard library, browser `fetch()`, Node.js, Go, or `nc`—can drive the display, read pixels back, and trigger alert sounds.
 
-- **Default base URL:** `http://127.0.0.1:8080` (configurable via `--host`, `--port`, or `MARKEE_PORT`; see [CLI options](../README.md#cli-options))
+- **Default base URL:** `http://127.0.0.1:8080` (configurable via `--host`, `--port`, `MARKEE_PORT`, or the config file; see [CLI options](../README.md#cli-options))
 - **Default resolution:** **72×16** (24-bit RGB, **3,456** raw bytes). When launched with `--resolution WxH`, PNGs must be `W×H` and raw frames must be `W × H × 3` bytes. Query [`GET /info`](#get-info) at runtime to discover the active size.
-- **Zero auth, open CORS:** All endpoints return JSON (except `GET /frame` image/raw readback) and allow cross-origin browser requests.
+- **Optional auth, open CORS:** No authentication by default; start with `--token <secret>` to require a Bearer token (see [Security note](#security-note)). Endpoints return JSON, except binary readback (`GET /frame`, `DELETE /record`) and the `/ui` HTML page, and they allow cross-origin browser requests.
 
 ---
 
@@ -18,8 +18,10 @@
   - [Color formats](#color-formats)
 - [Status](#status)
   - [GET /info](#get-info)
+- [Web Playground](#web-playground)
 - [Drawing](#drawing)
   - [POST /draw](#post-draw)
+  - [POST /notify](#post-notify)
   - [Draw operations](#draw-operations)
   - [Fonts](#fonts)
   - [Scrolling text](#scrolling-text)
@@ -38,6 +40,7 @@
 - [Display settings](#display-settings)
   - [GET /brightness](#get-brightness)
   - [POST /brightness](#post-brightness)
+  - [Idle dimming](#idle-dimming)
   - [GET /monochrome](#get-monochrome)
   - [POST /monochrome](#post-monochrome)
   - [DELETE /monochrome](#delete-monochrome)
@@ -45,8 +48,14 @@
 - [Alert sounds](#alert-sounds)
   - [GET /alert](#get-alert)
   - [POST /alert](#post-alert)
+- [Events](#events)
+  - [GET /events](#get-events)
+- [GIF Recording](#gif-recording)
 - [Recipes](#recipes)
 - [Protocol details and limits](#protocol-details-and-limits)
+  - [Responses, errors, and CORS](#responses-errors-and-cors)
+  - [Connections and resource limits](#connections-and-resource-limits)
+  - [Security note](#security-note)
 
 ---
 
@@ -77,7 +86,7 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | Group | Method | Path (aliases) | Summary |
 |---|---|---|---|
 | **Status** | `GET` | [`/info`](#get-info) (`/`, `/api/info`) | Resolution, settings, audio readiness, frame counter |
-| **Web UI** | `GET` | `/ui` | Built-in single-page browser studio (live preview, `/draw` editor, GIF/PNG dropzone, alerts) |
+| **Web UI** | `GET` | [`/ui`](#web-playground) (`/ui/`) | Built-in single-page browser studio (live preview, `/draw` editor, GIF/PNG dropzone, alerts) |
 | **Drawing** | `POST` `PUT` | [`/draw`](#post-draw) (`/api/draw`) | Run an atomic JSON batch of shapes, pixels, text, and images (optional `?ttl=<sec>`) |
 | **Notify** | `GET` `POST` `PUT` `DELETE` | [`/notify`](#post-notify) (`/api/notify`) | Show a transient notification banner or draw batch for `ttl` seconds, then restore prior state |
 | **Frames** | `GET` | [`/frame`](#get-frame) (`/frame.png`, `/frame.rgb`, `/api/frame`) | Read displayed pixels as a PNG or raw RGB24 |
@@ -88,6 +97,8 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | **GIFs** | `POST` `PUT` | [`/animate`](#post-animate) (`/api/animate`) | Play an animated (or static) GIF, center-cropped or centered to fit |
 | | `GET` | [`/animate`](#get-animate) (`/api/animate`) | Check active GIF animation status and current frame |
 | | `DELETE` | [`/animate`](#delete-animate) (`/api/animate`) | Stop the active GIF animation (keeps current frame on screen) |
+| | `POST` | [`/animate/pause`, `/animate/resume`](#post-animate) | Freeze or resume GIF playback |
+| | `POST` `PUT` | [`/animate/speed`](#post-animate) | Change GIF playback speed (`0.1..10.0`) |
 | **Pixels** | `GET` | [`/pixel`](#get-pixel) | Read a single pixel |
 | | `POST` `PUT` | [`/pixel`](#post-pixel) | Set a single pixel |
 | **Settings** | `GET` | [`/brightness`](#get-brightness) | Read GUI brightness (`0–100`) |
@@ -98,7 +109,7 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | | `DELETE` | [`/monochrome`](#delete-monochrome) (`/mono`) | Disable the monochrome tint filter |
 | | `POST` | [`/demo`](#post-demo) | Turn the built-in demo animation on or off |
 | **Alerts** | `GET` | [`/alert`](#get-alert) (`/alerts`, `/api/alert`, `/api/alerts`) | List built-in alert sounds and audio status |
-| | `POST` | [`/alert`](#post-alert), `/alert/<id\|name>` (`/api/alert`) | Play one of the 3 gentle alert sounds |
+| | `POST` | [`/alert`](#post-alert), `/alert/<id\|name>` (`/api/alert`) | Play one of the 3 gentle alert sounds or a custom `melody` |
 | **Events** | `GET` | [`/events`](#get-events) (`/api/events`) | Poll or stream (SSE) display click, bezel button, and frame update events |
 | | `POST` | [`/events`](#get-events) (`/api/events`) | Inject a click or button event (useful for automation & headless testing) |
 | **Record** | `GET` `POST` `DELETE` | [`/record`](#gif-recording) (`/api/record`) | Start, inspect, or stop recording displayed frames to an animated `image/gif` |
@@ -135,7 +146,8 @@ Understanding how each layer interacts makes every endpoint predictable:
   - Increment `frames_received` in [`GET /info`](#get-info).
 - **Monochrome filter** is applied non-destructively whenever pixels are read (GUI, `GET /frame`, `GET /pixel`). The underlying RGB framebuffer keeps full color, so disabling the filter restores the original colors immediately.
 - **Brightness (`0–100`)** dims only the simulated LEDs in the GUI window. Pixel readback (`GET /frame`, `GET /pixel`) is unaffected so read-modify-write loops never lose precision.
-- **Settings and alerts** (`/brightness`, `/monochrome`, `/demo`, `/alert`) do not count as framebuffer writes and do not increment `frames_received`. Playing an alert never interrupts the display, demo, or scrolling text.
+- **Other 60 Hz sources** also render into the framebuffer: [GIF playback](#animated-gifs), the `clock`/`countdown` [widgets](#clock--countdown-autonomous-widgets), and `/draw?transition=` animations. A [notification](#post-notify) (`/notify` or `/draw?ttl=`) temporarily takes over the display and restores the previous state, including any of these sources, when it expires.
+- **Settings and alerts** (`/brightness`, `/idle`, `/monochrome`, `/demo`, `/alert`) do not count as framebuffer writes and do not increment `frames_received`. Playing an alert never interrupts the display, demo, or scrolling text.
 
 ### Coordinates and raw RGB layout
 
@@ -215,6 +227,16 @@ curl http://127.0.0.1:8080/info
 | `frames_received` | int | Count of successful framebuffer writes since startup |
 | `audio_ready` | bool | Whether an audio output device is ready for alert chimes |
 | `alert_sounds` | int | Number of built-in alert sounds (`3`) |
+
+---
+
+## Web Playground
+
+**Methods:** `GET` · **Paths:** `/ui`, `/ui/`
+
+Serves a self-contained HTML page for trying the API in a browser: open `http://127.0.0.1:8080/ui`. It shows a live preview of the LED matrix (polled from `GET /frame?format=raw` and `GET /info`), a `/draw` JSON editor with clock, timer, and gradient presets, a GIF/PNG upload area (`/animate` and `/frame`) with pause, resume, and stop controls, brightness and monochrome controls, alert sound buttons, a `/notify` sender, and clear and demo buttons.
+
+When the server runs with `--token`, open `http://127.0.0.1:8080/ui?token=<secret>`; the page sends that token as an `Authorization: Bearer` header on every request it makes.
 
 ---
 
@@ -484,7 +506,7 @@ All static shape ops (`pixel`, `line`, `rect`, `oval`, `polygon`, `icon`, `gradi
 | `"4x6"`, `"3x5"`, `"small"` | 3×5 | 4 px | `A–Z` (case-insensitive), `0–9`, space, `! . : - + /` (others blank) | 18 chars/line; two rows fit at `y: 1` and `y: 9` |
 | `"prop"`, `"proportional"`, `"compact"` | variable×7 | glyph width + 1 px | Printable ASCII (`0x20–0x7E`) | Variable (~14–24 chars/line; narrow glyphs like `i`, `l`, `1`, `:` save space) |
 
-Total rendered width is `strlen(text) × advance` pixels.
+For the fixed-width fonts, total rendered width is `strlen(text) × advance` pixels. The proportional font's width depends on the glyphs used.
 
 ### Scrolling text
 
@@ -628,7 +650,7 @@ Decodes a GIF87a or GIF89a image (animated or static) and plays it on the LED ma
 curl -X POST --data-binary @nyan.gif http://127.0.0.1:8080/animate
 
 # Composite a dark-foreground transparent GIF over a light background
-curl -X POST --data-binary @examples/cat_chase1.gif "http://127.0.0.1:8080/animate?fill=white"
+curl -X POST --data-binary @examples/cat_chase-72x16.gif "http://127.0.0.1:8080/animate?fill=white"
 
 # Play once over a custom hex background and hold on the last frame
 curl -X POST --data-binary @intro.gif "http://127.0.0.1:8080/animate?fill=0x303040&loop=1"
@@ -645,6 +667,7 @@ curl -X POST --data-binary @intro.gif "http://127.0.0.1:8080/animate?fill=0x3030
   "frames": 12,
   "duration_ms": 1200,
   "loop": 0,
+  "speed": 1.00,
   "fill": "#000000",
   "active": true
 }
@@ -658,10 +681,10 @@ Any subsequent framebuffer write (`/frame`, `/draw`, `/fill`, `/pixel`, `/clear`
 
 **Methods:** `GET` · **Alias:** `/api/animate`
 
-Returns whether a GIF animation is currently playing, along with its dimensions, frame count, fill color, and current frame index.
+Returns whether a GIF animation is currently loaded, along with its paused state, playback speed, dimensions, frame count, fill color, and current frame index.
 
 ```json
-{"active":true,"width":72,"height":16,"source_width":100,"source_height":20,"frames":12,"current_frame":3,"duration_ms":1200,"loop":0,"fill":"#000000"}
+{"active":true,"paused":false,"speed":1.00,"width":72,"height":16,"source_width":100,"source_height":20,"frames":12,"current_frame":3,"duration_ms":1200,"loop":0,"fill":"#000000"}
 {"active":false}
 ```
 
@@ -758,7 +781,11 @@ curl -X PUT  http://127.0.0.1:8080/brightness -d 60
 
 **Methods:** `GET`, `POST`, `PUT`, `DELETE` · **Path:** `/idle`
 
-Automatically dims GUI brightness to a target level (`0–100`, default `20`) after `timeout_sec` seconds without API writes or user interaction, smoothly fading over 1 second and waking immediately on the next write or click.
+Automatically dims GUI brightness to a target level (`0–100`, default `20`) after `timeout_sec` seconds without API writes or user interaction, smoothly fading over 1 second and waking immediately on the next write or click. The same setting can be applied at startup with `--idle-dim` and `--idle-brightness`.
+
+- **`POST`/`PUT`** takes `timeout_sec` (alias `timeout`, `0..86400` seconds; `0` disables) and/or `brightness` (`0..100`), either as query parameters (`?timeout=300&brightness=15`) or as a JSON object. Fields you leave out keep their current values. Returns `{"ok":true,"enabled":true,"timeout_sec":300.00,"brightness":15}`, or `400` if neither field is valid.
+- **`GET`** returns the current settings and whether the display is dimmed right now.
+- **`DELETE`** disables idle dimming and returns `{"ok":true,"enabled":false,"timeout_sec":0}`.
 
 ```bash
 curl -X POST http://127.0.0.1:8080/idle -d '{"timeout_sec":300,"brightness":15}'
@@ -902,6 +929,10 @@ curl -X POST http://127.0.0.1:8080/alert -d '{"sound":"bell","volume":60}'
 curl -X POST http://127.0.0.1:8080/alert -d '{"melody":"C5:120,E5:120,G5:240","volume":75}'
 ```
 
+**Custom melodies:** pass `melody` as a JSON string or as `?melody=` to play a short bell-tone sequence in place of a built-in sound. Notes are separated by commas or spaces. Each note is a letter `A`–`G`, an optional `#` or `b`, and an octave `2`–`7` (for example `C5`, `F#4`, `Bb3`), or `R` (or `-`) for a rest, followed by an optional `:<ms>` duration (`30..2000`, default `160`). A melody can have up to 32 notes and last up to 5 seconds in total. A melody response looks like `{"ok":true,"melody":"C5:120,E5:120,G5:240","volume":75,"played":true}`. Invalid syntax returns `400`.
+
+A built-in sound returns:
+
 ```json
 {"ok":true,"id":2,"name":"chime","volume":80,"played":true}
 ```
@@ -925,7 +956,7 @@ curl -X POST http://127.0.0.1:8080/alert -d '{"melody":"C5:120,E5:120,G5:240","v
 Exposes a 64-entry ring buffer of interactive GUI clicks (`click` with LED pixel `x`, `y` and `left`/`right`), bezel taps or `Space`/`Enter` presses (`button`), and API framebuffer updates (`frame`).
 
 - **JSON polling (default):** `GET /events?since=<id>&wait=<ms>` (`wait` `0..5000` ms enables long-polling).
-- **Server-Sent Events (SSE):** send `Accept: text/event-stream` or `?stream=1` (optional `&max=<n>` closes after `n` events).
+- **Server-Sent Events (SSE):** send `Accept: text/event-stream`, `?stream=1`, or `?format=sse` (optional `&max=<n>` closes the stream after `n` events). An SSE response always closes the connection when it ends.
 
 ```bash
 # Poll recent events
@@ -961,7 +992,11 @@ curl -X POST "http://127.0.0.1:8080/record?fps=15&max_frames=300"
 curl -X DELETE -o capture.gif http://127.0.0.1:8080/record
 ```
 
-`GET /record` returns `{"recording":true,"frames":42,"fps":15,"max_frames":300}`. In GUI mode, press `R` to start/stop recording to `recording.gif`.
+- **`POST /record`** starts (or restarts) a recording. Optional `?fps=<2..30>` (default `15`) and `?max_frames=<1..1200>` (default `300`); recording stops on its own after `max_frames` frames (fewer on very large matrices, where memory sets a lower cap), and the captured frames are kept until `DELETE`. Returns `{"ok":true,"recording":true,"fps":15,"max_frames":300}`.
+- **`GET /record`** returns `{"recording":true,"frames":42,"fps":15,"max_frames":300}`.
+- **`DELETE /record`** stops recording and returns the animated GIF as `image/gif`, or `400` if nothing was recorded.
+
+In GUI mode, press `R` to start/stop recording to `recording.gif` in the working directory.
 
 ---
 
@@ -1064,19 +1099,20 @@ printf 'POST /fill?color=0x00ff00 HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nCo
 
 - Successful write endpoints return `200 OK` with JSON containing `"ok": true`.
 - Errors return valid, JSON-escaped `{"error": "<message>"}`.
-- All JSON request bodies (`/draw`, `/fill`, `/pixel`, `/brightness`, `/monochrome`, `/alert`) are parsed with a strict recursive-descent JSON parser. Query parameters are URL-decoded (`%XX` and `+` → space).
+- All JSON request bodies (`/draw`, `/notify`, `/fill`, `/pixel`, `/brightness`, `/idle`, `/monochrome`, `/alert`, `/events`, `/animate/speed`) are parsed with a strict recursive-descent JSON parser. Query parameters are URL-decoded (`%XX` and `+` → space).
 - Every response includes `Content-Length` and open CORS headers:
 
 ```http
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS
-Access-Control-Allow-Headers: Content-Type, Accept
+Access-Control-Allow-Headers: Content-Type, Accept, Authorization
 ```
 
 | Status | Meaning |
 |---|---|
 | `200 OK` | Request succeeded |
 | `204 No Content` | `OPTIONS` CORS preflight |
+| `401 Unauthorized` | `--token` is set and the request has no valid `Authorization: Bearer` header or `?token=` (response includes `WWW-Authenticate: Bearer`) |
 | `400 Bad Request` | Missing/invalid parameter, wrong frame dimensions, invalid PNG/JSON, or malformed HTTP (malformed HTTP also closes the connection) |
 | `404 Not Found` | Unknown path or unknown `/alert/<id\|name>` sound |
 | `405 Method Not Allowed` | Known path called with an unsupported method; the `Allow` header lists valid methods |
@@ -1099,4 +1135,4 @@ Access-Control-Allow-Headers: Content-Type, Accept
 
 ### Security note
 
-By default the HTTP API has no authentication and open CORS. When exposing `markee` on a LAN (`--host 0.0.0.0` or `::`), pass `--token <secret>` (or set `MARKEE_TOKEN=<secret>`). When enabled, all endpoints except `OPTIONS` CORS preflight require `Authorization: Bearer <secret>` or `?token=<secret>` and return `401 Unauthorized` otherwise.
+By default the HTTP API has no authentication and open CORS. When exposing `markee` on a LAN (`--host 0.0.0.0` or `::`), pass `--token <secret>` (or set `MARKEE_TOKEN=<secret>`). When enabled, all endpoints except `OPTIONS` CORS preflight require `Authorization: Bearer <secret>` or `?token=<secret>` and return `401 Unauthorized` otherwise. Tokens are compared in constant time. The client subcommands and the Python examples send the token for you when given `--token` or `MARKEE_TOKEN`; the [Web Playground](#web-playground) reuses the `?token=` it was opened with. Prefer the header to `?token=`, since query strings tend to end up in shell history and logs.
