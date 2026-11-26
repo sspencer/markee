@@ -2347,7 +2347,7 @@ static void test_widgets_api(void) {
     assert(display_take_pending_alert(&disp) == 3);
     assert(display_take_pending_alert(&disp) == 0); /* drained once */
 
-    /* 5. Scene transitions (?transition=fade|wipe|slide-left|slide-up) */
+    /* 5. Scene transitions (fade, wipe, center-out, then every other type in a table) */
     {
         r = do_request(port, "POST", "/fill?color=red", NULL, NULL, 0);
         assert(r.status == 200);
@@ -2381,6 +2381,81 @@ static void test_widgets_api(void) {
         assert(display_get_raw_rgb(&disp, snap, sizeof(snap)));
         assert(snap[0] == 0 && snap[1] == 255 && snap[2] == 0);                     /* x=0 -> green */
         assert(snap[71 * 3 + 0] == 0 && snap[71 * 3 + 1] == 0 && snap[71 * 3 + 2] == 255); /* x=71 -> blue */
+
+        /* Center-out halfway: center already new (red), corners still old (green) */
+        display_tick(&disp, 20.5); /* finish the wipe */
+        const char *to_red = "[{\"op\":\"clear\",\"color\":\"red\"}]";
+        r = do_request(port, "POST", "/draw?transition=center-out&transition_ms=200",
+                       "application/json", to_red, strlen(to_red));
+        assert(r.status == 200);
+        free(r.body);
+        display_tick(&disp, 20.6);
+        assert(display_get_raw_rgb(&disp, snap, sizeof(snap)));
+        size_t mid = ((size_t)8 * 72 + 36) * 3;
+        assert(snap[mid] == 255 && snap[mid + 1] == 0 && snap[mid + 2] == 0);      /* (36,8) -> red */
+        assert(snap[0] == 0 && snap[1] == 255 && snap[2] == 0);                    /* (0,0) -> green */
+        size_t last = ((size_t)15 * 72 + 71) * 3;
+        assert(snap[last] == 0 && snap[last + 1] == 255 && snap[last + 2] == 0);   /* (71,15) -> green */
+        display_tick(&disp, 20.75);
+        assert(display_get_raw_rgb(&disp, snap, sizeof(snap)));
+        assert(snap[0] == 255 && snap[last] == 255 && snap[last + 1] == 0);        /* done -> all red */
+
+        /* Directional and pattern transitions, red -> blue, sampled at t=0.5.
+         * want: 't' = pixel shows the new frame, 'f' = still the old frame. */
+        {
+            struct { const char *name; int n; int x[4]; int y[4]; const char *want; } tc[] = {
+                {"slide-right", 2, {0, 71},        {8, 8},        "tf"},
+                {"slide-down",  2, {0, 0},         {0, 15},       "tf"},
+                {"wipe-right",  2, {0, 71},        {8, 8},        "tf"},
+                {"wipe-left",   2, {71, 0},        {8, 8},        "tf"},
+                {"wipe-up",     2, {0, 0},         {15, 0},       "tf"},
+                {"wipe-down",   2, {0, 0},         {0, 15},       "tf"},
+                {"split",       3, {36, 0, 71},    {8, 8, 8},     "tff"},
+                {"blinds",      4, {0, 7, 64, 71}, {8, 8, 8, 8},  "tftf"},
+                {"dissolve",    0, {0},            {0},           ""},
+                {"dip",         0, {0},            {0},           ""},
+            };
+            const char *to_red2 = "[{\"op\":\"clear\",\"color\":\"red\"}]";
+            const char *to_blue2 = "[{\"op\":\"clear\",\"color\":\"blue\"}]";
+            double now = 21.0;
+            for (size_t k = 0; k < sizeof(tc) / sizeof(tc[0]); k++, now += 1.0) {
+                r = do_request(port, "POST", "/draw", "application/json", to_red2, strlen(to_red2));
+                assert(r.status == 200);
+                free(r.body);
+                display_tick(&disp, now);
+                char path[96];
+                snprintf(path, sizeof(path), "/draw?transition=%s&transition_ms=200", tc[k].name);
+                r = do_request(port, "POST", path, "application/json", to_blue2, strlen(to_blue2));
+                assert(r.status == 200);
+                free(r.body);
+                display_tick(&disp, now + 0.1);
+                assert(display_get_raw_rgb(&disp, snap, sizeof(snap)));
+                for (int p = 0; p < tc[k].n; p++) {
+                    size_t i = ((size_t)tc[k].y[p] * 72 + (size_t)tc[k].x[p]) * 3;
+                    bool is_new = snap[i] == 0 && snap[i + 1] == 0 && snap[i + 2] == 255;
+                    bool is_old = snap[i] == 255 && snap[i + 1] == 0 && snap[i + 2] == 0;
+                    if (!(tc[k].want[p] == 't' ? is_new : is_old)) {
+                        fprintf(stderr, "transition %s: pixel (%d,%d) = %u,%u,%u, want %s\n",
+                                tc[k].name, tc[k].x[p], tc[k].y[p], snap[i], snap[i + 1], snap[i + 2],
+                                tc[k].want[p] == 't' ? "new" : "old");
+                        assert(0);
+                    }
+                }
+                if (strcmp(tc[k].name, "dissolve") == 0) {
+                    int n_new = 0;
+                    for (size_t i = 0; i < sizeof(snap); i += 3) n_new += snap[i + 2] == 255;
+                    assert(n_new > 72 * 16 * 3 / 10 && n_new < 72 * 16 * 7 / 10);
+                }
+                if (strcmp(tc[k].name, "dip") == 0) {
+                    assert(snap[0] <= 8 && snap[2] <= 8);                /* black at the midpoint */
+                }
+                display_tick(&disp, now + 0.25);
+                assert(display_get_raw_rgb(&disp, snap, sizeof(snap)));
+                for (size_t i = 0; i < sizeof(snap); i += 3) {
+                    assert(snap[i] == 0 && snap[i + 1] == 0 && snap[i + 2] == 255);
+                }
+            }
+        }
 
         /* Invalid transition rejected with 400 */
         r = do_request(port, "POST", "/draw?transition=spin", "application/json", to_green, strlen(to_green));
@@ -2587,6 +2662,112 @@ static void test_ini_config(void) {
     printf("[PASS] INI config file parsing and window position persistence\n");
 }
 
+/* Write text to a fresh temp file; returns its path in out (size >= 64). */
+static void write_temp(char *out, const char *text) {
+    snprintf(out, 64, "/tmp/markee_cli_XXXXXX");
+    int fd = mkstemp(out);
+    assert(fd >= 0);
+    size_t len = strlen(text);
+    assert(write(fd, text, len) == (ssize_t)len);
+    close(fd);
+}
+
+static int run_cli(const char *const *args, int n) {
+    char *argv[16];
+    assert(n < 16);
+    for (int i = 0; i < n; i++) argv[i] = (char *)args[i];
+    argv[n] = NULL;
+    return cli_run(n, argv);
+}
+
+static void test_cli_client(void) {
+    MarkeeDisplay disp;
+    assert(display_init(&disp, 72, 16, false));
+    MarkeeServer *srv = server_start(&disp, "127.0.0.1", 0);
+    assert(srv != NULL);
+    uint16_t port = server_get_port(srv);
+    server_set_token(srv, "cl1t0k");
+    char port_s[8];
+    snprintf(port_s, sizeof(port_s), "%u", (unsigned)port);
+
+    unsetenv("MARKEE_HOST");
+    unsetenv("MARKEE_PORT");
+    unsetenv("MARKEE_TOKEN");
+
+    assert(cli_is_subcommand("draw"));
+
+    /* Port and token come from config.ini; a wildcard host maps to loopback. */
+    char cfg_text[128], cfg_path[64];
+    snprintf(cfg_text, sizeof(cfg_text), "host = 0.0.0.0\nport = %u\ntoken = cl1t0k\n", (unsigned)port);
+    write_temp(cfg_path, cfg_text);
+
+    uint8_t pr, pg, pb;
+    const char *red[] = {"markee", "draw", "[{\"op\":\"clear\",\"color\":\"red\"}]", "--config", cfg_path};
+    assert(run_cli(red, 5) == 0);
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 255 && pg == 0 && pb == 0);
+
+    /* Ops read from a file, with a transition. */
+    char ops_path[64];
+    write_temp(ops_path, "[{\"op\":\"clear\",\"color\":\"#0000ff\"}]");
+    const char *blue[] = {"markee", "draw", ops_path, "--config", cfg_path};
+    assert(run_cli(blue, 5) == 0);
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 0 && pb == 255);
+
+    /* --transition-ms reaches the server: 1000 ms fade, 500 ms in -> about half blended. */
+    display_tick(&disp, 100.0);
+    const char *slow[] = {"markee", "draw", "[{\"op\":\"clear\",\"color\":\"red\"}]", "--config", cfg_path,
+                          "--transition", "fade", "--transition-ms", "1000"};
+    assert(run_cli(slow, 9) == 0);
+    display_tick(&disp, 100.5);
+    uint8_t tsnap[MARKEE_FRAME_BYTES];
+    assert(display_get_raw_rgb(&disp, tsnap, sizeof(tsnap)));
+    assert(tsnap[0] >= 120 && tsnap[0] <= 136 && tsnap[2] >= 120 && tsnap[2] <= 136);
+    display_tick(&disp, 101.1);
+    assert(display_get_raw_rgb(&disp, tsnap, sizeof(tsnap)));
+    assert(tsnap[0] == 255 && tsnap[2] == 0);
+    /* Out of range, non-numeric, or without --transition: rejected locally. */
+    const char *ms_low[] = {"markee", "draw", "[]", "--config", cfg_path, "--transition", "fade", "--transition-ms", "10"};
+    assert(run_cli(ms_low, 9) != 0);
+    const char *ms_nan[] = {"markee", "say", "hi", "--config", cfg_path, "--transition", "fade", "--transition-ms", "slow"};
+    assert(run_cli(ms_nan, 9) != 0);
+    const char *ms_alone[] = {"markee", "say", "hi", "--config", cfg_path, "--transition-ms", "500"};
+    assert(run_cli(ms_alone, 7) != 0);
+    const char *say_ms[] = {"markee", "say", "hi", "--config", cfg_path, "--transition", "dip", "--transition-ms", "400"};
+    assert(run_cli(say_ms, 9) == 0);
+    display_tick(&disp, 102.0);
+    const char *blue2[] = {"markee", "draw", ops_path, "--config", cfg_path};
+    assert(run_cli(blue2, 5) == 0);
+
+    /* Env overrides config (bad port fails); a flag overrides env. */
+    setenv("MARKEE_PORT", "1", 1);
+    assert(run_cli(red, 5) != 0);
+    const char *flag[] = {"markee", "draw", "[{\"op\":\"clear\",\"color\":\"lime\"}]", "--config", cfg_path, "-p", port_s};
+    assert(run_cli(flag, 7) == 0);
+    assert(display_get_pixel(&disp, 0, 0, &pr, &pg, &pb) == MARKEE_OK);
+    assert(pr == 0 && pg == 255 && pb == 0);
+    unsetenv("MARKEE_PORT");
+
+    /* --no-config drops the config token -> 401 -> non-zero exit. */
+    const char *nocfg[] = {"markee", "info", "--no-config", "-p", port_s};
+    assert(run_cli(nocfg, 5) != 0);
+
+    /* Invalid ops are rejected by the server; missing files and bad --config fail locally. */
+    const char *bad[] = {"markee", "draw", "[{\"op\":\"nope\"}]", "--config", cfg_path};
+    assert(run_cli(bad, 5) != 0);
+    const char *missing[] = {"markee", "draw", "/nonexistent/ops.json", "--config", cfg_path};
+    assert(run_cli(missing, 5) != 0);
+    const char *badcfg[] = {"markee", "info", "--config", "/nonexistent/markee.ini"};
+    assert(run_cli(badcfg, 4) != 0);
+
+    unlink(cfg_path);
+    unlink(ops_path);
+    server_stop(srv);
+    display_destroy(&disp);
+    printf("[PASS] CLI client (markee draw, --transition-ms, config.ini host/port/token, env + flag precedence)\n");
+}
+
 int main(void) {
     signal(SIGPIPE, SIG_IGN);
     SetTraceLogLevel(LOG_ERROR);
@@ -2608,6 +2789,7 @@ int main(void) {
     test_notify_ttl_api();
     test_widgets_api();
     test_ini_config();
+    test_cli_client();
 
     printf("\nAll markee tests passed!\n");
     return 0;

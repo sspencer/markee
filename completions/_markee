@@ -9,6 +9,7 @@ _markee() {
         'timer:Start a live countdown timer widget'
         'clock:Display the built-in digital clock widget'
         'alert:Play a synthesized alert sound (ding, chime, bell)'
+        'draw:Send a raw /draw JSON op list (file, stdin, or inline)'
         'clear:Clear the LED matrix to black'
         'info:Show server status and capabilities JSON'
     )
@@ -19,7 +20,7 @@ _markee() {
     sounds=(ding chime bell)
     fonts=(4x6 5x7 6x8 8x8 prop)
     fits=(crop contain stretch)
-    transitions=(fade slide-left slide-up wipe)
+    transitions=(fade dip slide-left slide-right slide-up slide-down wipe wipe-left wipe-up wipe-down split center-out blinds dissolve)
     clock_formats=(24h 24hm 12h 12hm)
 
     if (( CURRENT >= 3 )); then
@@ -29,12 +30,15 @@ _markee() {
                     '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
                     '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
                     '--token[Bearer auth token]:token:' \
+                    '--config[Read host/port/token from INI file]:config file:_files' \
+                    '--no-config[Ignore config.ini]' \
                     '(-c --color)'{-c,--color}'[Text color]:color:('"${colors[*]}"')' \
                     '--bg[Background color]:color:('"${colors[*]}"')' \
                     '--font[Bitmap font]:font:('"${fonts[*]}"')' \
                     '--scroll[Scroll text horizontally]' \
                     '--speed[Scroll speed in px/s]:speed:' \
                     '--transition[Transition effect]:transition:('"${transitions[*]}"')' \
+                    '--transition-ms[Transition duration (50..5000 ms)]:milliseconds:(250 500 800 1000 2000)' \
                     '--sound[Alert sound]:sound:('"${sounds[*]}"')' \
                     '--ding[Play ding sound]' \
                     '--chime[Play chime sound]' \
@@ -48,6 +52,8 @@ _markee() {
                     '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
                     '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
                     '--token[Bearer auth token]:token:' \
+                    '--config[Read host/port/token from INI file]:config file:_files' \
+                    '--no-config[Ignore config.ini]' \
                     '--ttl[Duration in seconds]:seconds:' \
                     '(-c --color)'{-c,--color}'[Text color]:color:('"${colors[*]}"')' \
                     '--bg[Background color]:color:('"${colors[*]}"')' \
@@ -65,6 +71,8 @@ _markee() {
                     '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
                     '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
                     '--token[Bearer auth token]:token:' \
+                    '--config[Read host/port/token from INI file]:config file:_files' \
+                    '--no-config[Ignore config.ini]' \
                     '--fill[Transparent background fill color]:color:('"${colors[*]}"')' \
                     '--fit[Scaling mode]:fit:('"${fits[*]}"')' \
                     '--speed[Playback speed multiplier]:speed:' \
@@ -77,6 +85,8 @@ _markee() {
                     '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
                     '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
                     '--token[Bearer auth token]:token:' \
+                    '--config[Read host/port/token from INI file]:config file:_files' \
+                    '--no-config[Ignore config.ini]' \
                     '(-c --color)'{-c,--color}'[Timer color]:color:('"${colors[*]}"')' \
                     '--bg[Background color]:color:('"${colors[*]}"')' \
                     '--font[Bitmap font]:font:('"${fonts[*]}"')' \
@@ -93,6 +103,8 @@ _markee() {
                     '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
                     '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
                     '--token[Bearer auth token]:token:' \
+                    '--config[Read host/port/token from INI file]:config file:_files' \
+                    '--no-config[Ignore config.ini]' \
                     '(-c --color)'{-c,--color}'[Clock color]:color:('"${colors[*]}"')' \
                     '--bg[Background color]:color:('"${colors[*]}"')' \
                     '--font[Bitmap font]:font:('"${fonts[*]}"')' \
@@ -104,6 +116,8 @@ _markee() {
                     '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
                     '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
                     '--token[Bearer auth token]:token:' \
+                    '--config[Read host/port/token from INI file]:config file:_files' \
+                    '--no-config[Ignore config.ini]' \
                     '--volume[Volume 0..100]:volume:' \
                     '--ding[Play ding sound]' \
                     '--chime[Play chime sound]' \
@@ -111,11 +125,25 @@ _markee() {
                     '1:sound:('"${sounds[*]}"')'
                 return
                 ;;
+            draw)
+                _arguments \
+                    '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
+                    '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
+                    '--token[Bearer auth token]:token:' \
+                    '--config[Read host/port/token from INI file]:config file:_files' \
+                    '--no-config[Ignore config.ini]' \
+                    '--transition[Transition effect]:transition:('"${transitions[*]}"')' \
+                    '--transition-ms[Transition duration (50..5000 ms)]:milliseconds:(250 500 800 1000 2000)' \
+                    '1:ops JSON file (or - for stdin):_files -g "*.json(-.)"'
+                return
+                ;;
             clear|info)
                 _arguments \
                     '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
                     '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
-                    '--token[Bearer auth token]:token:'
+                    '--token[Bearer auth token]:token:' \
+                    '--config[Read host/port/token from INI file]:config file:_files' \
+                    '--no-config[Ignore config.ini]'
                 return
                 ;;
         esac

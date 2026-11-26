@@ -119,15 +119,28 @@ file on exit.
 .BR \-h ", " \-\-help
 Display usage information and exit.
 .SH CLIENT SUBCOMMANDS
-All client subcommands honor \fBMARKEE_HOST\fR, \fBMARKEE_PORT\fR,
-\fBMARKEE_TOKEN\fR, and accept \fB\-H\fR/\fB\-\-host\fR, \fB\-p\fR/\fB\-\-port\fR,
-and \fB\-\-token\fR.
+Client subcommands send one request to an already running \fBmarkee\fR and
+exit non-zero on failure; they never start a display. The server address and
+token come from, in order of precedence: \fB\-H\fR/\fB\-\-host\fR,
+\fB\-p\fR/\fB\-\-port\fR, and \fB\-\-token\fR; then \fBMARKEE_HOST\fR,
+\fBMARKEE_PORT\fR, and \fBMARKEE_TOKEN\fR; then \fBhost\fR, \fBport\fR, and
+\fBtoken\fR in the configuration file (\fB\-\-config\fR \fIpath\fR selects
+another file, \fB\-\-no\-config\fR skips it). A wildcard host
+(\fB0.0.0.0\fR or \fB::\fR) connects to loopback.
+.TP
+.BI "draw " "[file|-|json]"
+Send a raw \fBPOST /draw\fR JSON operation list (see \fBAPI.md\fR) read from
+\fIfile\fR, from standard input (\fB\-\fR, or no argument when input is piped),
+or given inline as an argument starting with \fB[\fR or \fB{\fR. Accepts
+\fB\-\-transition\fR (\fBfade\fR, \fBdip\fR, \fBslide-left\fR, \fBslide-right\fR, \fBslide-up\fR, \fBslide-down\fR, \fBwipe\fR, \fBwipe-left\fR, \fBwipe-up\fR, \fBwipe-down\fR, \fBsplit\fR, \fBcenter-out\fR, \fBblinds\fR, \fBdissolve\fR) and
+\fB\-\-transition\-ms\fR \fI50..5000\fR (default 250).
 .TP
 .BI "say " "<text>"
 Display text on the matrix. Supports \fB\-c\fR/\fB\-\-color\fR, \fB\-\-bg\fR,
 \fB\-\-font\fR (\fB4x6\fR, \fB5x7\fR, \fB6x8\fR, \fB8x8\fR, \fBprop\fR),
 \fB\-\-scroll\fR, \fB\-\-speed\fR (scroll speed in px/s), \fB\-\-transition\fR
-(\fBfade\fR, \fBslide-left\fR, \fBslide-up\fR, \fBwipe\fR),
+(\fBfade\fR, \fBdip\fR, \fBslide-left\fR, \fBslide-right\fR, \fBslide-up\fR, \fBslide-down\fR, \fBwipe\fR, \fBwipe-left\fR, \fBwipe-up\fR, \fBwipe-down\fR, \fBsplit\fR, \fBcenter-out\fR, \fBblinds\fR, \fBdissolve\fR),
+\fB\-\-transition\-ms\fR \fI50..5000\fR (default 250),
 \fB\-\-sound\fR/\fB\-\-ding\fR/\fB\-\-chime\fR/\fB\-\-bell\fR,
 and \fB\-\-volume 0..100\fR for the sound.
 .TP
@@ -284,6 +297,7 @@ markee --position center,60 --monochrome amber
 markee say "BUILD OK" --color green --chime
 markee timer 25m --color amber --sound bell
 markee gif examples/cat_chase-72x16.gif --fill white
+cat examples/ops.json | markee draw
 .fi
 .SH SEE ALSO
 Full HTTP API documentation is installed alongside this package in

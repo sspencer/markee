@@ -1,13 +1,13 @@
 # fish completion for markee
 
-set -l __markee_subcommands say notify gif timer clock alert clear info
+set -l __markee_subcommands say notify gif timer clock alert draw clear info
 set -l __markee_positions nw n ne w c e sw s se center top-left top top-right left right bottom-left bottom bottom-right
 set -l __markee_colors white warmwhite red green blue cyan magenta yellow amber orange purple pink black
 set -l __markee_cases white charcoal orange retro
 set -l __markee_sounds ding chime bell
 set -l __markee_fonts 4x6 5x7 6x8 8x8 prop
 set -l __markee_fits crop contain stretch
-set -l __markee_transitions fade slide-left slide-up wipe
+set -l __markee_transitions fade dip slide-left slide-right slide-up slide-down wipe wipe-left wipe-up wipe-down split center-out blinds dissolve
 set -l __markee_formats 24h 24hm 12h 12hm
 
 # Disable default file completions except where explicitly enabled
@@ -20,6 +20,7 @@ complete -c markee -n "__fish_use_subcommand" -a gif -d "Play an animated GIF on
 complete -c markee -n "__fish_use_subcommand" -a timer -d "Start a live countdown timer widget"
 complete -c markee -n "__fish_use_subcommand" -a clock -d "Display the built-in digital clock widget"
 complete -c markee -n "__fish_use_subcommand" -a alert -d "Play a synthesized alert sound"
+complete -c markee -n "__fish_use_subcommand" -a draw -d "Send a raw /draw JSON op list"
 complete -c markee -n "__fish_use_subcommand" -a clear -d "Clear the LED matrix to black"
 complete -c markee -n "__fish_use_subcommand" -a info -d "Show server status and capabilities JSON"
 
@@ -57,6 +58,8 @@ complete -c markee -n "$__markee_no_sub" -s h -l help -d "Show usage and exit"
 complete -c markee -n "__fish_seen_subcommand_from $__markee_subcommands" -s H -l host -x -d "Server host"
 complete -c markee -n "__fish_seen_subcommand_from $__markee_subcommands" -s p -l port -x -d "Server TCP port"
 complete -c markee -n "__fish_seen_subcommand_from $__markee_subcommands" -l token -x -d "Bearer auth token"
+complete -c markee -n "__fish_seen_subcommand_from $__markee_subcommands" -l config -r -F -d "Read host/port/token from INI file"
+complete -c markee -n "__fish_seen_subcommand_from $__markee_subcommands" -l no-config -d "Ignore config.ini"
 
 # say
 complete -c markee -n "__fish_seen_subcommand_from say" -s c -l color -x -a "$__markee_colors" -d "Text color"
@@ -65,6 +68,7 @@ complete -c markee -n "__fish_seen_subcommand_from say" -l font -x -a "$__markee
 complete -c markee -n "__fish_seen_subcommand_from say" -l scroll -d "Scroll text horizontally"
 complete -c markee -n "__fish_seen_subcommand_from say" -l speed -x -d "Scroll speed (px/s)"
 complete -c markee -n "__fish_seen_subcommand_from say" -l transition -x -a "$__markee_transitions" -d "Transition effect"
+complete -c markee -n "__fish_seen_subcommand_from say" -l transition-ms -x -a "250 500 800 1000 2000" -d "Transition duration (50..5000 ms)"
 complete -c markee -n "__fish_seen_subcommand_from say" -l sound -x -a "$__markee_sounds" -d "Alert sound"
 complete -c markee -n "__fish_seen_subcommand_from say" -l ding -d "Play ding sound"
 complete -c markee -n "__fish_seen_subcommand_from say" -l chime -d "Play chime sound"
@@ -112,3 +116,8 @@ complete -c markee -n "__fish_seen_subcommand_from alert" -l volume -x -d "Volum
 complete -c markee -n "__fish_seen_subcommand_from alert" -l ding -d "Play ding sound"
 complete -c markee -n "__fish_seen_subcommand_from alert" -l chime -d "Play chime sound"
 complete -c markee -n "__fish_seen_subcommand_from alert" -l bell -d "Play bell sound"
+
+# draw (ops JSON file, - for stdin, or inline JSON)
+complete -c markee -n "__fish_seen_subcommand_from draw" -F
+complete -c markee -n "__fish_seen_subcommand_from draw" -l transition -x -a "$__markee_transitions" -d "Transition effect"
+complete -c markee -n "__fish_seen_subcommand_from draw" -l transition-ms -x -a "250 500 800 1000 2000" -d "Transition duration (50..5000 ms)"

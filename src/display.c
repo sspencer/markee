@@ -108,7 +108,20 @@ bool display_parse_transition(const char *s, MarkeeTransitionType *out) {
     if (strcasecmp(s, "fade") == 0 || strcasecmp(s, "crossfade") == 0) { *out = MARKEE_TRANS_FADE; return true; }
     if (strcasecmp(s, "slide-left") == 0 || strcasecmp(s, "slide") == 0) { *out = MARKEE_TRANS_SLIDE_LEFT; return true; }
     if (strcasecmp(s, "slide-up") == 0) { *out = MARKEE_TRANS_SLIDE_UP; return true; }
-    if (strcasecmp(s, "wipe") == 0) { *out = MARKEE_TRANS_WIPE; return true; }
+    if (strcasecmp(s, "wipe") == 0 || strcasecmp(s, "wipe-right") == 0) { *out = MARKEE_TRANS_WIPE; return true; }
+    if (strcasecmp(s, "slide-right") == 0) { *out = MARKEE_TRANS_SLIDE_RIGHT; return true; }
+    if (strcasecmp(s, "slide-down") == 0) { *out = MARKEE_TRANS_SLIDE_DOWN; return true; }
+    if (strcasecmp(s, "wipe-left") == 0) { *out = MARKEE_TRANS_WIPE_LEFT; return true; }
+    if (strcasecmp(s, "wipe-up") == 0) { *out = MARKEE_TRANS_WIPE_UP; return true; }
+    if (strcasecmp(s, "wipe-down") == 0) { *out = MARKEE_TRANS_WIPE_DOWN; return true; }
+    if (strcasecmp(s, "split") == 0) { *out = MARKEE_TRANS_SPLIT; return true; }
+    if (strcasecmp(s, "blinds") == 0) { *out = MARKEE_TRANS_BLINDS; return true; }
+    if (strcasecmp(s, "dissolve") == 0) { *out = MARKEE_TRANS_DISSOLVE; return true; }
+    if (strcasecmp(s, "dip") == 0 || strcasecmp(s, "dip-black") == 0) { *out = MARKEE_TRANS_DIP; return true; }
+    if (strcasecmp(s, "center-out") == 0 || strcasecmp(s, "iris") == 0) {
+        *out = MARKEE_TRANS_CENTER_OUT;
+        return true;
+    }
     return false;
 }
 
@@ -131,6 +144,22 @@ void display_activate_transition(MarkeeDisplay *disp, const uint8_t *from_pixels
     disp->trans.has_start_time = disp->has_tick_time;
     disp->trans.start_time = disp->has_tick_time ? disp->last_tick_time : 0.0;
     pthread_mutex_unlock(&disp->lock);
+}
+
+/* Stateless 32-bit integer hash (lowbias32): a fixed pseudo-random order for dissolve. */
+static uint32_t transition_hash32(uint32_t v) {
+    v ^= v >> 16;
+    v *= 0x7feb352dU;
+    v ^= v >> 15;
+    v *= 0x846ca68bU;
+    v ^= v >> 16;
+    return v;
+}
+
+static void copy_px(uint8_t *out, const uint8_t *src, size_t i) {
+    out[i + 0] = src[i + 0];
+    out[i + 1] = src[i + 1];
+    out[i + 2] = src[i + 2];
 }
 
 static void apply_transition_unlocked(const MarkeeDisplay *disp, uint8_t *out_rgb) {
@@ -186,6 +215,87 @@ static void apply_transition_unlocked(const MarkeeDisplay *disp, uint8_t *out_rg
                 memcpy(out_rgb + (size_t)y * row_bytes, from + (size_t)(y + shift) * row_bytes, row_bytes);
             } else {
                 memcpy(out_rgb + (size_t)y * row_bytes, to + (size_t)(y - from_vis) * row_bytes, row_bytes);
+            }
+        }
+    } else if (disp->trans.type == MARKEE_TRANS_SLIDE_RIGHT) {
+        double eased = 1.0 - (1.0 - t) * (1.0 - t);
+        int shift = (int)lround(eased * (double)w);
+        for (int y = 0; y < h; y++) {
+            size_t row = (size_t)y * (size_t)w * 3;
+            int from_vis = w - shift;
+            if (shift > 0) {
+                memcpy(out_rgb + row, to + row + (size_t)from_vis * 3, (size_t)shift * 3);
+            }
+            if (from_vis > 0) {
+                memcpy(out_rgb + row + (size_t)shift * 3, from + row, (size_t)from_vis * 3);
+            }
+        }
+    } else if (disp->trans.type == MARKEE_TRANS_SLIDE_DOWN) {
+        double eased = 1.0 - (1.0 - t) * (1.0 - t);
+        int shift = (int)lround(eased * (double)h);
+        size_t row_bytes = (size_t)w * 3;
+        for (int y = 0; y < h; y++) {
+            if (y < shift) {
+                memcpy(out_rgb + (size_t)y * row_bytes, to + (size_t)(y + h - shift) * row_bytes, row_bytes);
+            } else {
+                memcpy(out_rgb + (size_t)y * row_bytes, from + (size_t)(y - shift) * row_bytes, row_bytes);
+            }
+        }
+    } else if (disp->trans.type == MARKEE_TRANS_WIPE_UP || disp->trans.type == MARKEE_TRANS_WIPE_DOWN) {
+        int split = (int)lround(t * (double)h);
+        size_t row_bytes = (size_t)w * 3;
+        bool up = disp->trans.type == MARKEE_TRANS_WIPE_UP;
+        for (int y = 0; y < h; y++) {
+            bool is_new = up ? (y >= h - split) : (y < split);
+            memcpy(out_rgb + (size_t)y * row_bytes, (is_new ? to : from) + (size_t)y * row_bytes, row_bytes);
+        }
+    } else if (disp->trans.type == MARKEE_TRANS_WIPE_LEFT ||
+               disp->trans.type == MARKEE_TRANS_SPLIT ||
+               disp->trans.type == MARKEE_TRANS_BLINDS) {
+        /* Column-based reveals: decide per column, then copy the whole column. */
+        const int blind_w = 8;
+        int wipe_split = (int)lround(t * (double)w);
+        double half = t * (double)w / 2.0;
+        int blind_k = (int)lround(t * (double)blind_w);
+        for (int x = 0; x < w; x++) {
+            bool is_new;
+            if (disp->trans.type == MARKEE_TRANS_WIPE_LEFT) {
+                is_new = x >= w - wipe_split;
+            } else if (disp->trans.type == MARKEE_TRANS_SPLIT) {
+                is_new = fabs((double)x + 0.5 - (double)w / 2.0) < half;
+            } else {
+                is_new = (x % blind_w) < blind_k;
+            }
+            const uint8_t *src = is_new ? to : from;
+            for (int y = 0; y < h; y++) {
+                copy_px(out_rgb, src, ((size_t)y * (size_t)w + (size_t)x) * 3);
+            }
+        }
+    } else if (disp->trans.type == MARKEE_TRANS_DISSOLVE) {
+        size_t n = (size_t)w * (size_t)h;
+        for (size_t p = 0; p < n; p++) {
+            double threshold = (double)(transition_hash32((uint32_t)p) >> 8) / 16777216.0;
+            copy_px(out_rgb, threshold < t ? to : from, p * 3);
+        }
+    } else if (disp->trans.type == MARKEE_TRANS_DIP) {
+        /* Fade the old frame to black over the first half, then the new frame in. */
+        const uint8_t *src = t < 0.5 ? from : to;
+        double k = t < 0.5 ? 1.0 - 2.0 * t : 2.0 * t - 1.0;
+        for (size_t i = 0; i < disp->frame_bytes; i++) {
+            out_rgb[i] = (uint8_t)lround((double)src[i] * k);
+        }
+    } else if (disp->trans.type == MARKEE_TRANS_CENTER_OUT) {
+        /* Iris: the new frame grows as an ellipse matching the display's aspect
+         * ratio, from the center until it covers the corners (radius sqrt(2)). */
+        const double cx = (double)w / 2.0, cy = (double)h / 2.0;
+        const double r = t * 1.41421356237;
+        const double r2 = r * r;
+        for (int y = 0; y < h; y++) {
+            double dy = ((double)y + 0.5 - cy) / cy;
+            for (int x = 0; x < w; x++) {
+                double dx = ((double)x + 0.5 - cx) / cx;
+                size_t i = ((size_t)y * (size_t)w + (size_t)x) * 3;
+                copy_px(out_rgb, (dx * dx + dy * dy <= r2) ? to : from, i);
             }
         }
     }

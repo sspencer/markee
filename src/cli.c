@@ -15,11 +15,12 @@
 #include <unistd.h>
 
 #include "config.h"
+#include "ini.h"
 
 bool cli_is_subcommand(const char *arg) {
     if (!arg || !*arg) return false;
     static const char *const CMDS[] = {
-        "say", "notify", "gif", "timer", "clock", "alert", "clear", "info"
+        "say", "notify", "gif", "timer", "clock", "alert", "clear", "info", "draw"
     };
     for (size_t i = 0; i < sizeof(CMDS) / sizeof(CMDS[0]); i++) {
         if (strcmp(arg, CMDS[i]) == 0) return true;
@@ -91,6 +92,47 @@ static void url_enc(const char *in, char *out, size_t out_size) {
         }
     }
     out[o] = '\0';
+}
+
+/* Read a whole file (or stdin for "-") into a malloc'd buffer of at most max_len bytes. */
+static bool read_input(const char *path, size_t max_len, uint8_t **out, size_t *out_len) {
+    bool use_stdin = strcmp(path, "-") == 0;
+    FILE *fp = use_stdin ? stdin : fopen(path, "rb");
+    if (!fp) {
+        perror(path);
+        return false;
+    }
+    size_t cap = 4096, len = 0;
+    uint8_t *buf = malloc(cap);
+    bool ok = buf != NULL;
+    while (ok) {
+        if (len == cap) {
+            if (cap > max_len) break;
+            cap *= 2;
+            uint8_t *nb = realloc(buf, cap);
+            if (!nb) { ok = false; break; }
+            buf = nb;
+        }
+        size_t n = fread(buf + len, 1, cap - len, fp);
+        len += n;
+        if (n == 0) {
+            if (ferror(fp)) ok = false;
+            break;
+        }
+    }
+    if (!use_stdin) fclose(fp);
+    if (ok && (len == 0 || len > max_len)) {
+        fprintf(stderr, "markee: %s is empty or exceeds %zu bytes\n",
+                use_stdin ? "stdin" : path, max_len);
+        ok = false;
+    }
+    if (!ok) {
+        free(buf);
+        return false;
+    }
+    *out = buf;
+    *out_len = len;
+    return true;
 }
 
 static int http_call(const char *host, const char *port, const char *token,
@@ -195,13 +237,69 @@ static int http_call(const char *host, const char *port, const char *token,
     return 1;
 }
 
+/* "/draw", optionally with ?transition=T[&transition_ms=MS]. */
+static void build_draw_path(char *path, size_t size, const char *transition, int transition_ms) {
+    if (!transition) {
+        snprintf(path, size, "/draw");
+        return;
+    }
+    char etr[32];
+    url_enc(transition, etr, sizeof(etr));
+    if (transition_ms > 0) {
+        snprintf(path, size, "/draw?transition=%s&transition_ms=%d", etr, transition_ms);
+    } else {
+        snprintf(path, size, "/draw?transition=%s", etr);
+    }
+}
+
 int cli_run(int argc, char **argv) {
     const char *cmd = argv[1];
-    const char *host = getenv("MARKEE_HOST");
-    if (!host || !*host) host = MARKEE_DEFAULT_HOST;
-    const char *port = getenv("MARKEE_PORT");
-    if (!port || !*port) port = "8080";
-    const char *token = getenv("MARKEE_TOKEN");
+
+    /* Connection settings, lowest to highest precedence: built-in defaults,
+     * config.ini (the same file the display reads), MARKEE_* env vars, flags. */
+    const char *config_arg = NULL;
+    bool no_config = false;
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--no-config") == 0) {
+            no_config = true;
+        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            config_arg = argv[++i];
+        }
+    }
+    MarkeeConfig cfg;
+    markee_config_defaults(&cfg);
+    if (!no_config) {
+        char default_path[1024] = {0};
+        const char *cpath = config_arg;
+        if (!cpath && markee_config_default_path(default_path, sizeof(default_path))) {
+            cpath = default_path;
+        }
+        if (cpath) {
+            bool not_found = false;
+            char cerr[256] = {0};
+            if (!markee_config_load_file(cpath, &cfg, &not_found, cerr, sizeof(cerr)) &&
+                (config_arg || !not_found)) {
+                fprintf(stderr, "markee: config error (%s): %s\n", cpath, cerr);
+                if (config_arg) return 1;
+            }
+        }
+    }
+
+    /* A wildcard bind address is not connectable; talk to loopback instead. */
+    const char *host = cfg.host;
+    if (!*host || strcmp(host, "0.0.0.0") == 0) host = "127.0.0.1";
+    else if (strcmp(host, "::") == 0) host = "::1";
+    char cfg_port[8];
+    snprintf(cfg_port, sizeof(cfg_port), "%u", (unsigned)cfg.port);
+    const char *port = cfg_port;
+    const char *token = cfg.token[0] ? cfg.token : NULL;
+
+    const char *env = getenv("MARKEE_HOST");
+    if (env && *env) host = env;
+    env = getenv("MARKEE_PORT");
+    if (env && *env) port = env;
+    env = getenv("MARKEE_TOKEN");
+    if (env && *env) token = env;
 
     const char *positional = NULL;
     const char *color = "warmwhite";
@@ -213,6 +311,7 @@ int cli_run(int argc, char **argv) {
     const char *sound = NULL;
     const char *format = "24h";
     const char *transition = NULL;
+    int transition_ms = 0;              /* 0 = server default (250 ms) */
     double ttl = 5.0;
     double speed = 1.0;
     bool speed_set = false;
@@ -228,6 +327,10 @@ int cli_run(int argc, char **argv) {
             port = argv[++i];
         } else if (strcmp(argv[i], "--token") == 0 && i + 1 < argc) {
             token = argv[++i];
+        } else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            i++; /* handled above */
+        } else if (strcmp(argv[i], "--no-config") == 0) {
+            /* handled above */
         } else if ((strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--color") == 0) && i + 1 < argc) {
             color = argv[++i];
         } else if (strcmp(argv[i], "--bg") == 0 && i + 1 < argc) {
@@ -261,16 +364,29 @@ int cli_run(int argc, char **argv) {
             format = argv[++i];
         } else if (strcmp(argv[i], "--transition") == 0 && i + 1 < argc) {
             transition = argv[++i];
+        } else if (strcmp(argv[i], "--transition-ms") == 0 && i + 1 < argc) {
+            const char *v = argv[++i];
+            char *end = NULL;
+            long ms = strtol(v, &end, 10);
+            if (end == v || *end != '\0' || ms < 50 || ms > 5000) {
+                fprintf(stderr, "markee %s: --transition-ms must be an integer from 50 to 5000 (got '%s')\n", cmd, v);
+                return 1;
+            }
+            transition_ms = (int)ms;
         } else if (strcmp(argv[i], "--scroll") == 0) {
             scroll = true;
         } else if (strcmp(argv[i], "--no-bar") == 0) {
             has_bar = false;
-        } else if (argv[i][0] != '-' && !positional) {
+        } else if ((argv[i][0] != '-' || strcmp(argv[i], "-") == 0) && !positional) {
             positional = argv[i];
         } else {
             fprintf(stderr, "Unknown option for 'markee %s': %s\n", cmd, argv[i]);
             return 1;
         }
+    }
+    if (transition_ms && !transition) {
+        fprintf(stderr, "markee %s: --transition-ms needs --transition\n", cmd);
+        return 1;
     }
 
     if (strcmp(cmd, "info") == 0) {
@@ -354,12 +470,8 @@ int cli_run(int argc, char **argv) {
                  "{\"op\":\"text\",\"y\":4,\"text\":\"%s\",\"color\":\"%s\",\"font\":\"%s\","
                  "\"align\":\"center\",\"scroll\":%s%s}]",
                  eb, et, ec, ef, scroll ? "true" : "false", espeed);
-        char path[128] = "/draw";
-        if (transition) {
-            char etr[32];
-            url_enc(transition, etr, sizeof(etr));
-            snprintf(path, sizeof(path), "/draw?transition=%s", etr);
-        }
+        char path[128];
+        build_draw_path(path, sizeof(path), transition, transition_ms);
         int r = http_call(host, port, token, "POST", path, "application/json", json, strlen(json));
         if (r == 0 && sound) {
             char enc[64], apath[128];
@@ -369,31 +481,39 @@ int cli_run(int argc, char **argv) {
         }
         return r;
     }
+    if (strcmp(cmd, "draw") == 0) {
+        /* Ops come inline ('[...]' / '{...}'), from a file, or from stdin ("-" or no argument). */
+        const char *src = positional ? positional : "-";
+        if (!positional && isatty(STDIN_FILENO)) {
+            fprintf(stderr, "Usage: markee draw [ops.json|-|'[...]'] [--transition T [--transition-ms MS]]\n"
+                            "       cat ops.json | markee draw\n"
+                            "  Sends a /draw JSON op list (see docs/API.md) to the running display.\n");
+            return 1;
+        }
+        uint8_t *body = NULL;
+        size_t len = 0;
+        if (src[0] == '[' || src[0] == '{') {
+            len = strlen(src);
+            body = malloc(len);
+            if (!body) return 1;
+            memcpy(body, src, len);
+        } else if (!read_input(src, MARKEE_MAX_BODY_BYTES, &body, &len)) {
+            return 1;
+        }
+        char path[128];
+        build_draw_path(path, sizeof(path), transition, transition_ms);
+        int r = http_call(host, port, token, "POST", path, "application/json", body, len);
+        free(body);
+        return r;
+    }
     if (strcmp(cmd, "gif") == 0) {
         if (!positional) {
             fprintf(stderr, "Usage: markee gif <file.gif> [--fill C] [--fit crop|contain|stretch] [--speed S] [--loop N]\n");
             return 1;
         }
-        FILE *fp = fopen(positional, "rb");
-        if (!fp) {
-            perror(positional);
-            return 1;
-        }
-        fseek(fp, 0, SEEK_END);
-        long sz = ftell(fp);
-        fseek(fp, 0, SEEK_SET);
-        if (sz <= 0 || sz > MARKEE_MAX_BODY_BYTES) {
-            fprintf(stderr, "markee: GIF file size invalid or exceeds 4 MiB\n");
-            fclose(fp);
-            return 1;
-        }
-        uint8_t *buf = malloc((size_t)sz);
-        if (!buf || fread(buf, 1, (size_t)sz, fp) != (size_t)sz) {
-            free(buf);
-            fclose(fp);
-            return 1;
-        }
-        fclose(fp);
+        uint8_t *buf = NULL;
+        size_t sz = 0;
+        if (!read_input(positional, MARKEE_MAX_BODY_BYTES, &buf, &sz)) return 1;
 
         char efill[64], efit[32], path[256];
         url_enc(fill, efill, sizeof(efill));
@@ -405,7 +525,7 @@ int cli_run(int argc, char **argv) {
             snprintf(path, sizeof(path), "/animate?fill=%s&fit=%s&speed=%.2f",
                      efill, efit, speed);
         }
-        int r = http_call(host, port, token, "POST", path, "image/gif", buf, (size_t)sz);
+        int r = http_call(host, port, token, "POST", path, "image/gif", buf, sz);
         free(buf);
         return r;
     }

@@ -1,0 +1,12 @@
+[
+  { "op": "clear", "color": "#000814" },
+  { "op": "oval",    "x": 1,  "y": 2, "w": 12, "h": 12, "fill": "red", "color": "#ff9090" },
+  { "op": "rect",    "x": 15, "y": 2, "w": 12, "h": 12, "fill": "orange", "radius": 3 },
+  { "op": "polygon", "points": [[29, 13], [35, 2], [41, 13]], "fill": "yellow" },
+  { "op": "polygon", "points": [[49, 2], [55, 8], [49, 14], [43, 8]], "fill": "#00e060" },
+  { "op": "rect",    "x": 58, "y": 2, "w": 13, "h": 12, "color": "cyan" },
+  { "op": "oval",    "x": 61, "y": 5, "w": 7,  "h": 6,  "fill": "magenta" },
+  { "op": "line",    "x1": 0, "y1": 15, "x2": 71, "y2": 15, "color": "#3060ff" },
+  { "op": "pixel",   "x": 35, "y": 0, "color": "white" },
+  { "op": "pixel",   "x": 49, "y": 0, "color": "white" }
+]

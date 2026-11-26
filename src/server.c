@@ -1136,7 +1136,7 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         int tr_ms = 250;
         if (!extract_transition_params(req, &tr_type, &tr_ms)) {
             send_json(fd, 400, "Bad Request",
-                      "{\"error\":\"invalid transition (fade, slide-left, slide-up, wipe) or transition_ms (50..5000)\"}",
+                      "{\"error\":\"invalid transition (fade, dip, slide-left, slide-right, slide-up, slide-down, wipe, wipe-left, wipe-up, wipe-down, split, center-out, blinds, dissolve) or transition_ms (50..5000)\"}",
                       ka);
             return;
         }

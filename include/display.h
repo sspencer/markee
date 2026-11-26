@@ -24,7 +24,17 @@ typedef enum {
     MARKEE_TRANS_FADE,
     MARKEE_TRANS_SLIDE_LEFT,
     MARKEE_TRANS_SLIDE_UP,
-    MARKEE_TRANS_WIPE
+    MARKEE_TRANS_WIPE,              /* wipe-right */
+    MARKEE_TRANS_CENTER_OUT,
+    MARKEE_TRANS_SLIDE_RIGHT,
+    MARKEE_TRANS_SLIDE_DOWN,
+    MARKEE_TRANS_WIPE_LEFT,
+    MARKEE_TRANS_WIPE_UP,
+    MARKEE_TRANS_WIPE_DOWN,
+    MARKEE_TRANS_SPLIT,
+    MARKEE_TRANS_BLINDS,
+    MARKEE_TRANS_DISSOLVE,
+    MARKEE_TRANS_DIP
 } MarkeeTransitionType;
 
 typedef struct {
@@ -251,7 +261,7 @@ void display_stop_gif_unlocked(MarkeeDisplay *disp);
 bool display_get_gif_status(MarkeeDisplay *disp, MarkeeGifStatus *out_status);
 bool display_is_gif_active(MarkeeDisplay *disp);
 
-/* Scene transitions ("fade", "slide-left", "slide-up", "wipe"). */
+/* Scene transitions ("fade", "dip", "slide-left", "slide-right", "slide-up", "slide-down", "wipe", "wipe-left", "wipe-up", "wipe-down", "split", "center-out", "blinds", "dissolve"). */
 bool display_parse_transition(const char *s, MarkeeTransitionType *out);
 void display_capture_transition_from(MarkeeDisplay *disp, uint8_t *out_from);
 void display_activate_transition(MarkeeDisplay *disp, const uint8_t *from_pixels,

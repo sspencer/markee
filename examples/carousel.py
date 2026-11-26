@@ -3,7 +3,7 @@
 Rotating status carousel daemon for markee.
 
 Cycles through pluggable information cards with smooth transitions
-(`slide-left`, `fade`, `slide-up`, `wipe`) on a configurable interval, and
+(`slide-left`, `fade`, `slide-up`, `wipe`, `center-out`, `dissolve`, ...) on a configurable interval, and
 advances immediately when Space/Enter or the bezel is clicked via GET /events.
 
 Built-in cards (`--cards clock,date,sys,git,weather`):
@@ -241,7 +241,7 @@ def main() -> int:
     parser.add_argument("--repo", default=".", help="Git repo path for 'git' card (default: .)")
     parser.add_argument("--city", help="City name for optional 'weather' card (via wttr.in)")
     parser.add_argument("--interval", type=float, default=6.0, help="Seconds per card (default: 6.0)")
-    parser.add_argument("--transition", default="slide-left", choices=["none", "fade", "slide-left", "slide-up", "wipe"], help="Card transition effect")
+    parser.add_argument("--transition", default="slide-left", choices=["none", "fade", "slide-left", "slide-up", "slide-right", "slide-down", "wipe", "wipe-left", "wipe-up", "wipe-down", "split", "center-out", "blinds", "dissolve", "dip"], help="Card transition effect")
     parser.add_argument("--transition-ms", type=int, default=350, help="Transition duration in ms (default: 350)")
     parser.add_argument("--once", action="store_true", help="Render every card once and exit")
     parser.add_argument("--dry-run", action="store_true", help="Print card payloads without contacting markee")

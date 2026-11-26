@@ -25,7 +25,7 @@ It is an independent hobby project, not a BUSY Bar emulator. Its HTTP API is int
   - **Frame I/O (`/frame`):** upload or read back lossless `W×H` PNGs, or stream raw 24-bit RGB (`3,456` bytes at 72×16) at 60 FPS
   - **Rich drawing extras:** text alignment and a proportional font, clipped scrolling regions, 16 built-in 8×8 `icon`s, linear `gradient`s, and per-shape `alpha` blending
   - **Autonomous widgets:** `progress` bars, `sparkline`s, and server-side `clock` and `countdown` ops that keep ticking with no client attached
-  - **Scene transitions & notifications:** `?transition=fade|slide-left|slide-up|wipe` on `/draw`, and `/notify` (or `/draw?ttl=`) to show a temporary banner and then restore the previous screen
+  - **Scene transitions & notifications:** `?transition=fade|dip|slide-left|slide-right|slide-up|slide-down|wipe|wipe-left|wipe-up|wipe-down|split|center-out|blinds|dissolve` on `/draw`, and `/notify` (or `/draw?ttl=`) to show a temporary banner and then restore the previous screen
   - **Animated GIF playback (`/animate`):** crop, contain, or stretch fit, fill color, loop count, speed, and pause/resume
   - **GIF recording (`/record`):** capture the live display to an animated GIF (also hotkey `R`)
   - **Events (`/events`):** LED clicks, bezel taps, and key presses via JSON long-polling or Server-Sent Events
@@ -34,7 +34,7 @@ It is an independent hobby project, not a BUSY Bar emulator. Its HTTP API is int
 - **Built-in gentle alert sounds (`/alert`)** — 3 procedurally synthesized, non-startling chimes (`ding`, `chime`, `bell`) plus custom note-sequence melodies, with volume control and overlapping playback; zero external audio files required
 - **Web Playground (`GET /ui`)** — a browser page with a live LED preview, a `/draw` JSON editor, GIF/PNG drag-and-drop, and alert buttons
 - **Desktop widget modes** — always-on-top, borderless floating window, compass/coordinate placement with position persistence, and 4 enclosure color themes
-- **Client CLI subcommands** — `markee say`, `notify`, `gif`, `timer`, `clock`, `alert`, `clear`, and `info` drive a running instance without `curl`
+- **Client CLI subcommands** — `markee say`, `notify`, `gif`, `timer`, `clock`, `alert`, `draw`, `clear`, and `info` drive a running instance without `curl`
 - **INI config file** — `~/.config/markee/config.ini` sets defaults for every startup option
 - **Headless mode** — run `--headless` for scripts, daemons, and CI without opening a window
 - **Integrations & packaging** — zero-dependency Python applets, an MCP server for AI coding agents, a man page, Bash/Zsh/Fish completions, and macOS `.app`/Homebrew/`.deb`/tarball packaging
@@ -205,7 +205,9 @@ With `save_position = true` (or `--save-position`), `markee` writes the window's
 
 ### Client CLI subcommands
 
-The same binary can drive a running `markee` instance, so you don't have to write `curl` commands or JSON by hand. Each subcommand reads `MARKEE_HOST`, `MARKEE_PORT`, and `MARKEE_TOKEN`, or takes `-H`/`--host`, `-p`/`--port`, and `--token`.
+The same binary can drive a running `markee` instance, so you don't have to write `curl` commands or JSON by hand. A subcommand never starts a display: it sends one HTTP request to the running instance and exits non-zero if it can't connect or the request fails.
+
+Each subcommand finds the display the same way the display configures itself. In order of precedence: `-H`/`--host`, `-p`/`--port`, and `--token`; then `MARKEE_HOST`, `MARKEE_PORT`, and `MARKEE_TOKEN`; then `host`, `port`, and `token` from `config.ini` (`--config <path>` picks a different file, `--no-config` skips it). A wildcard `host = 0.0.0.0` or `::` connects to loopback.
 
 ```bash
 ./markee say "BUILD OK!" --color green --bg "#001408" --chime
@@ -215,18 +217,22 @@ The same binary can drive a running `markee` instance, so you don't have to writ
 ./markee timer 25m --color amber --sound chime
 ./markee clock --color warmwhite --format 12h
 ./markee alert chime --volume 75
+./markee draw examples/ops.json --transition dissolve --transition-ms 800 # any /draw op list, from a file
+cat examples/ops.json | ./markee draw              # ...or piped on stdin
+./markee draw '[{"op":"clock"}]'                  # ...or inline JSON
 ./markee clear
 ./markee info
 ```
 
 | Subcommand | What it does | Options |
 |---|---|---|
-| `say <text>` | Clears the display and draws centered text (`POST /draw`) | `-c`/`--color` (default `warmwhite`), `--bg` (default `black`), `--font` (default `6x8`), `--scroll`, `--speed <px/s>` (scroll speed, default `24`), `--transition fade\|slide-left\|slide-up\|wipe`, `--sound <name>` or `--ding`/`--chime`/`--bell`, `--volume 0..100` |
+| `say <text>` | Clears the display and draws centered text (`POST /draw`) | `-c`/`--color` (default `warmwhite`), `--bg` (default `black`), `--font` (default `6x8`), `--scroll`, `--speed <px/s>` (scroll speed, default `24`), `--transition fade\|dip\|slide-left\|slide-right\|slide-up\|slide-down\|wipe\|wipe-left\|wipe-up\|wipe-down\|split\|center-out\|blinds\|dissolve`, `--transition-ms 50..5000` (default `250`), `--sound <name>` or `--ding`/`--chime`/`--bell`, `--volume 0..100` |
 | `notify <text>` | Shows a temporary banner, then restores the previous screen (`POST /notify`) | `--ttl <sec>` (default `5`), `-c`/`--color`, `--bg`, `--border`, `--font`, `--sound <name>` or `--ding`/`--chime`/`--bell` |
 | `gif <file.gif>` | Uploads and plays a GIF, up to 4 MiB (`POST /animate`) | `--fill <color>`, `--fit crop\|contain\|stretch` (default `crop`), `--speed <x>` (default `1.0`), `--loop <n>` |
 | `timer <duration>` | Starts an autonomous `countdown` widget. Durations look like `90s`, `25m`, or `1h30m` | `-c`/`--color`, `--bg`, `--font`, `--no-bar`, `--sound <name>` or `--ding`/`--chime`/`--bell` (plays when the timer finishes) |
 | `clock` | Starts the autonomous `clock` widget | `-c`/`--color`, `--bg`, `--font`, `--format 24h\|24hm\|12h\|12hm` (default `24h`) |
 | `alert [ding\|chime\|bell]` | Plays an alert sound (default `ding`) | `--volume 0..100` (default `100`) |
+| `draw [file\|-\|json]` | Sends a raw [`/draw`](docs/API.md#post-draw) JSON op list from a file, stdin (`-`, or no argument when piped), or an inline argument starting with `[` or `{`; up to 4 MiB (`POST /draw`) | `--transition fade\|dip\|slide-left\|slide-right\|slide-up\|slide-down\|wipe\|wipe-left\|wipe-up\|wipe-down\|split\|center-out\|blinds\|dissolve`, `--transition-ms 50..5000` (default `250`) |
 | `clear` | Clears the display | — |
 | `info` | Prints the `GET /info` JSON | — |
 
@@ -310,6 +316,7 @@ Zero-dependency Python 3 integrations live in `examples/`:
 
 - [`examples/demo.py`](examples/demo.py) — `/info`, PNG round-trip, and 60 FPS raw RGB24 stream (`python3 examples/demo.py --seconds 8 --save readback.png`)
 - [`examples/mcp_server.py`](examples/mcp_server.py) — stdio **Model Context Protocol (MCP)** server exposing `markee_say`, `markee_notify`, `markee_progress`, `markee_draw`, `markee_timer`, `markee_clock`, `markee_alert`, `markee_clear`, and `markee_info` to AI coding agents (reads `MARKEE_URL` / `MARKEE_TOKEN`)
+- [`examples/ops.json`](examples/ops.json) — sample `/draw` op list (circle, rounded square, triangle, diamond, framed oval, and a baseline in different colors) for `markee draw examples/ops.json` or `curl --data @examples/ops.json`
 - [`examples/pomodoro.py`](examples/pomodoro.py) — Focus / Pomodoro timer with countdown bar, color shift, completion melodies, and `Space`/bezel skip (`python3 examples/pomodoro.py --work 25 --short-break 5`)
 - [`examples/now_playing.py`](examples/now_playing.py) — Now Playing ticker for macOS Spotify/Apple Music and Linux `playerctl` with icon, clipped scrolling title, and a Tesla-style bottom ambient LED strip tinted to the album art's highlight color (`python3 examples/now_playing.py --demo`)
 - [`examples/sysmon.py`](examples/sysmon.py) — Live CPU sparkline, memory meter, and network activity monitor for macOS & Linux (`python3 examples/sysmon.py`)
