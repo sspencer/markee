@@ -191,6 +191,15 @@ static void test_layout_sizing(void) {
     assert(fabsf(L2.dpi - MARKEE_DEFAULT_DPI) < 0.01f);
     assert(fabsf(L2.matrix_w / L2.dpi - MARKEE_MATRIX_WIDTH_INCHES) < 0.01f);
 
+    /* Borderless layout trims unused top desk margin while preserving internal geometry */
+    MarkeeLayout Lb = L;
+    Lb.borderless = true;
+    renderer_apply_borderless_margins(&Lb);
+    assert(Lb.body_y <= 1.01f);
+    assert(Lb.window_h < L.window_h);
+    assert(fabsf((Lb.matrix_x - Lb.body_x) - (L.matrix_x - L.body_x)) < 0.01f);
+    assert(fabsf((Lb.matrix_y - Lb.body_y) - (L.matrix_y - L.body_y)) < 0.01f);
+
     /* Manual DPI override */
     MarkeeLayout L3 = renderer_compute_layout(72, 16, 1.0f, MARKEE_PIXEL_SQUARE, 144.0f, 1920, 500);
     assert(fabsf(L3.dpi - 144.0f) < 0.01f);

@@ -277,6 +277,27 @@ MarkeeLayout renderer_compute_layout(int width, int height, float zoom,
     return L;
 }
 
+void renderer_apply_borderless_margins(MarkeeLayout *L) {
+    if (!L || !L->borderless) return;
+    /* In borderless mode the backdrop is fully transparent and the drop shadow extends
+     * only sideways (~6.3*z) and downward (~19.1*z), never above body_y. Keeping only a
+     * 1 px anti-aliasing margin on top eliminates the phantom gap below the macOS menu bar. */
+    float margin_x = ceilf(7.0f * L->zoom);
+    float margin_top = 1.0f;
+    float margin_bottom = ceilf(20.0f * L->zoom);
+    float dx = margin_x - L->body_x;
+    float dy = margin_top - L->body_y;
+
+    L->window_w = (int)roundf(L->body_w + margin_x * 2.0f);
+    L->window_h = (int)roundf(L->body_h + margin_top + margin_bottom);
+    L->body_x += dx;
+    L->body_y += dy;
+    L->face_x += dx;
+    L->face_y += dy;
+    L->matrix_x += dx;
+    L->matrix_y += dy;
+}
+
 MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
                                      MarkeePixelShape pixel_shape,
                                      const char *host, uint16_t port,
@@ -297,6 +318,8 @@ MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
 
     /* Initial window using fallback DPI so GLFW initializes monitor metrics cleanly */
     MarkeeLayout initial = renderer_compute_layout(width, height, zoom, pixel_shape, override_dpi, 0, 0);
+    initial.borderless = opts->borderless;
+    renderer_apply_borderless_margins(&initial);
 
     char title[160];
     snprintf(title, sizeof(title), "markee — %dx%d LED Display (http://%s:%u)",
@@ -313,6 +336,7 @@ MarkeeLayout renderer_init_window_ex(int width, int height, float zoom,
     MarkeeLayout layout = renderer_compute_layout(width, height, zoom, pixel_shape, override_dpi, mon_w, phys_w_mm);
     layout.borderless = opts->borderless;
     layout.case_theme = opts->case_theme;
+    renderer_apply_borderless_margins(&layout);
     if (layout.window_w != initial.window_w || layout.window_h != initial.window_h) {
         SetWindowSize(layout.window_w, layout.window_h);
     }

@@ -110,6 +110,10 @@ MarkeeLayout renderer_compute_layout(int width, int height, float zoom,
                                      float override_dpi,
                                      int monitor_w, int monitor_phys_w_mm);
 
+/* Trim unused top/side desk margins when L->borderless is true so the transparent window
+ * tightly hugs the visible molded enclosure (avoiding dead space under OS menu bars). */
+void renderer_apply_borderless_margins(MarkeeLayout *L);
+
 /* Initialize raylib window calibrated for the given resolution, zoom level, and pixel shape. */
 MarkeeLayout renderer_init_window(int width, int height, float zoom,
                                   MarkeePixelShape pixel_shape,
