@@ -90,13 +90,15 @@ bool renderer_parse_corner(const char *s, MarkeeWindowCorner *out_corner) {
     return false;
 }
 
-static bool parse_axis_coord(const char *s, size_t len, bool *out_centered, int *out_val) {
+static bool parse_axis_coord(const char *s, size_t len,
+                             bool *out_centered, bool *out_from_end, int *out_val) {
     if (!s || len == 0 || len >= 32) return false;
     char buf[32];
     memcpy(buf, s, len);
     buf[len] = '\0';
     if (strcasecmp(buf, "center") == 0 || strcasecmp(buf, "middle") == 0 || strcasecmp(buf, "c") == 0) {
         *out_centered = true;
+        *out_from_end = false;
         *out_val = 0;
         return true;
     }
@@ -104,6 +106,7 @@ static bool parse_axis_coord(const char *s, size_t len, bool *out_centered, int 
     long v = strtol(buf, &end, 10);
     if (end == buf || *end != '\0' || v < -16384 || v > 16384) return false;
     *out_centered = false;
+    *out_from_end = (buf[0] == '-');
     *out_val = (int)v;
     return true;
 }
@@ -116,6 +119,8 @@ bool renderer_parse_position(const char *s, MarkeeWindowOpts *out_opts) {
         out_opts->has_position = false;
         out_opts->center_x = false;
         out_opts->center_y = false;
+        out_opts->from_right = false;
+        out_opts->from_bottom = false;
         out_opts->corner = corner;
         return true;
     }
@@ -124,14 +129,17 @@ bool renderer_parse_position(const char *s, MarkeeWindowOpts *out_opts) {
     if (!comma || strchr(comma + 1, ',') != NULL) return false;
 
     bool cx = false, cy = false;
+    bool fx = false, fy = false;
     int px = 0, py = 0;
-    if (!parse_axis_coord(s, (size_t)(comma - s), &cx, &px)) return false;
-    if (!parse_axis_coord(comma + 1, strlen(comma + 1), &cy, &py)) return false;
+    if (!parse_axis_coord(s, (size_t)(comma - s), &cx, &fx, &px)) return false;
+    if (!parse_axis_coord(comma + 1, strlen(comma + 1), &cy, &fy, &py)) return false;
 
     if (cx && cy) {
         out_opts->has_position = false;
         out_opts->center_x = false;
         out_opts->center_y = false;
+        out_opts->from_right = false;
+        out_opts->from_bottom = false;
         out_opts->corner = MARKEE_CORNER_CENTER;
         return true;
     }
@@ -139,6 +147,8 @@ bool renderer_parse_position(const char *s, MarkeeWindowOpts *out_opts) {
     out_opts->has_position = true;
     out_opts->center_x = cx;
     out_opts->center_y = cy;
+    out_opts->from_right = fx;
+    out_opts->from_bottom = fy;
     out_opts->pos_x = px;
     out_opts->pos_y = py;
     return true;
@@ -152,8 +162,21 @@ void renderer_compute_window_position(int mon_w, int mon_h, int win_w, int win_h
     int cy = (mon_h > win_h) ? (mon_h - win_h) / 2 : 0;
 
     if (opts && opts->has_position) {
-        x = opts->center_x ? cx : opts->pos_x;
-        y = opts->center_y ? cy : opts->pos_y;
+        if (opts->center_x) {
+            x = cx;
+        } else if ((opts->from_right || opts->pos_x < 0) && mon_w > 0) {
+            x = mon_w - win_w + opts->pos_x;
+        } else {
+            x = opts->pos_x;
+        }
+
+        if (opts->center_y) {
+            y = cy;
+        } else if ((opts->from_bottom || opts->pos_y < 0) && mon_h > 0) {
+            y = mon_h - win_h + opts->pos_y;
+        } else {
+            y = opts->pos_y;
+        }
     } else if (mon_w > 0 && mon_h > 0) {
         const int pad_x = 24;
         const int pad_top = 48;    /* clearance for OS menu bar */

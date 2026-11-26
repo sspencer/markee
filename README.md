@@ -108,7 +108,7 @@ Quit at any time with `Ctrl+C` (`SIGINT`), `SIGTERM`, `Q`/`ESC`, or by closing t
 | `--dpi <value>` | Override monitor logical DPI (`> 0`) if EDID physical sizing is wrong | Auto-detected (fallback `110`) |
 | `--always-on-top` | Keep the GUI window floating above other windows. Alias: `--topmost` | Off |
 | `--borderless` | Floating widget mode: hide OS titlebar, transparent backdrop, drag enclosure to move. Alias: `--frameless` | Off |
-| `--position <pos>` | Initial window placement: 9-point compass (`nw`, `n`, `ne`, `w`, `c`, `e`, `sw`, `s`, `se` or full words `northwest`, `north`, …), edge/corner names (`top-left`, `top`, `left`, `center`, `right`, `bottom`, …), or pixel coordinates `X,Y` (either axis may be `center`, e.g. `center,80`). Alias: `--pos` | `center` |
+| `--position <pos>` | Initial window placement: 9-point compass (`nw`, `n`, `ne`, `w`, `c`, `e`, `sw`, `s`, `se` or full words `northwest`, `north`, …), edge/corner names (`top-left`, `top`, `left`, `center`, `right`, `bottom`, …), or pixel coordinates `X,Y` where negative values inset from the right/bottom edge (`-10,10`, `-0,-0`) and either axis may be `center` (`center,-20`). Alias: `--pos` (also supports `--position=<pos>`) | `center` |
 | `--corner <place>` | Alias for named `--position` anchors (`nw`, `n`, `ne`, `w`, `c`, `e`, `sw`, `s`, `se`, `top-left`, `left`, `right`, `bottom`, …) | `center` |
 | `--case <theme>` | Enclosure color theme: `white`, `charcoal` (`black`/`dark`), `orange`, `retro` (`beige`) | `white` |
 | `--idle-dim <sec>` | Automatically dim GUI brightness after `sec` seconds with no API writes or input | Off (`0`) |

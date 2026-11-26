@@ -259,6 +259,23 @@ static void test_layout_sizing(void) {
     renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
     assert(wx == 40 && wy == (1080 - 160) / 2);
 
+    /* Negative X,Y inset from right/bottom edges (including -0 flush and center combos) */
+    assert(renderer_parse_position("-10,10", &opts) && opts.has_position && opts.from_right && !opts.from_bottom);
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == 1920 - 600 - 10 && wy == 10);
+
+    assert(renderer_parse_position("15,-20", &opts) && opts.has_position && !opts.from_right && opts.from_bottom);
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == 15 && wy == 1080 - 160 - 20);
+
+    assert(renderer_parse_position("-0,-0", &opts) && opts.has_position && opts.from_right && opts.from_bottom);
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == 1920 - 600 && wy == 1080 - 160);
+
+    assert(renderer_parse_position("center,-25", &opts) && opts.has_position && opts.center_x && opts.from_bottom);
+    renderer_compute_window_position(1920, 1080, 600, 160, &opts, &wx, &wy);
+    assert(wx == (1920 - 600) / 2 && wy == 1080 - 160 - 25);
+
     assert(!renderer_parse_position("120,340,5", &opts));
     assert(!renderer_parse_position("bogus", &opts));
 

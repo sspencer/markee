@@ -32,6 +32,8 @@ void markee_config_defaults(MarkeeConfig *cfg) {
     cfg->has_position = false;
     cfg->center_x = false;
     cfg->center_y = false;
+    cfg->from_right = false;
+    cfg->from_bottom = false;
     cfg->pos_x = 0;
     cfg->pos_y = 0;
     cfg->corner = MARKEE_CORNER_CENTER;
@@ -247,12 +249,16 @@ bool markee_config_parse_string(const char *text, MarkeeConfig *cfg,
                 cfg->has_position = false;
                 cfg->center_x = false;
                 cfg->center_y = false;
+                cfg->from_right = false;
+                cfg->from_bottom = false;
             } else {
                 MarkeeWindowOpts tmp = {0};
                 if (renderer_parse_position(val, &tmp)) {
                     cfg->has_position = tmp.has_position;
                     cfg->center_x = tmp.center_x;
                     cfg->center_y = tmp.center_y;
+                    cfg->from_right = tmp.from_right;
+                    cfg->from_bottom = tmp.from_bottom;
                     cfg->pos_x = tmp.pos_x;
                     cfg->pos_y = tmp.pos_y;
                     if (!tmp.has_position) cfg->corner = tmp.corner;
@@ -269,6 +275,8 @@ bool markee_config_parse_string(const char *text, MarkeeConfig *cfg,
             cfg->has_position = false;
             cfg->center_x = false;
             cfg->center_y = false;
+            cfg->from_right = false;
+            cfg->from_bottom = false;
         } else if (strcasecmp(key, "case") == 0 || strcasecmp(key, "case_theme") == 0) {
             if (!renderer_parse_case_theme(val, &cfg->case_theme)) {
                 if (err_buf && err_size > 0) snprintf(err_buf, err_size, "line %d: invalid case theme '%s'", line_no, val);

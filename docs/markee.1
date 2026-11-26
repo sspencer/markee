@@ -75,8 +75,10 @@ Descriptive anchor names: \fBtop-left\fR (\fBtl\fR), \fBtop\fR
 \fBright\fR (\fBmiddle-right\fR/\fBcenter-right\fR), \fBbottom-left\fR
 (\fBbl\fR), \fBbottom\fR (\fBbottom-center\fR), \fBbottom-right\fR (\fBbr\fR).
 .IP \(bu 2
-Explicit coordinates \fIX,Y\fR in screen pixels, where either axis may be
-\fBcenter\fR (e.g. \fB120,80\fR, \fBcenter,80\fR, \fB40,center\fR).
+Explicit coordinates \fIX,Y\fR in screen pixels, where negative values measure
+inward from the right or bottom edge (e.g. \fB\-10,10\fR places the right edge
+10 px from the right side and top edge 10 px down; \fB\-0,\-0\fR sits flush
+bottom-right), and either axis may be \fBcenter\fR (e.g. \fBcenter,\-20\fR).
 .RE
 .TP
 .BR \-\-corner " " \fIplace\fR

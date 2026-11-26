@@ -112,7 +112,8 @@ static void print_usage(const char *prog) {
            "      --position <pos>    Initial window position: compass direction (nw, n, ne, w,\n"
            "                          c, e, sw, s, se), edge/corner name (top-left, top, left,\n"
            "                          center, right, bottom-right, ...), or coordinates X,Y\n"
-           "                          (either axis may be 'center', e.g. center,80). Alias: --pos\n"
+           "                          (negative values inset from right/bottom, e.g. -10,10;\n"
+           "                          either axis may be 'center', e.g. center,-20). Alias: --pos\n"
            "      --corner <place>    Alias for named --position anchors (nw, n, ne, w, c, e,\n"
            "                          sw, s, se, top-left, top, left, center, right, bottom, ...)\n"
            "      --case <theme>      Enclosure color theme: white, charcoal, orange, retro\n"
@@ -240,6 +241,8 @@ int main(int argc, char **argv) {
     bool has_position = cfg.has_position;
     bool center_x = cfg.center_x;
     bool center_y = cfg.center_y;
+    bool from_right = cfg.from_right;
+    bool from_bottom = cfg.from_bottom;
     int pos_x = cfg.pos_x, pos_y = cfg.pos_y;
     MarkeeWindowCorner corner = cfg.corner;
     MarkeeCaseTheme case_theme = cfg.case_theme;
@@ -308,16 +311,22 @@ int main(int argc, char **argv) {
             always_on_top = true;
         } else if (strcmp(argv[i], "--borderless") == 0 || strcmp(argv[i], "--frameless") == 0) {
             borderless = true;
-        } else if ((strcmp(argv[i], "--position") == 0 || strcmp(argv[i], "--pos") == 0) && i + 1 < argc) {
+        } else if (((strcmp(argv[i], "--position") == 0 || strcmp(argv[i], "--pos") == 0) && i + 1 < argc) ||
+                   strncmp(argv[i], "--position=", 11) == 0 || strncmp(argv[i], "--pos=", 6) == 0) {
+            const char *pval = (strncmp(argv[i], "--position=", 11) == 0)
+                                   ? (argv[i] + 11)
+                                   : ((strncmp(argv[i], "--pos=", 6) == 0) ? (argv[i] + 6) : argv[++i]);
             MarkeeWindowOpts parsed_pos = {0};
-            if (!renderer_parse_position(argv[++i], &parsed_pos)) {
+            if (!renderer_parse_position(pval, &parsed_pos)) {
                 fprintf(stderr, "Invalid position '%s' (expected nw/n/ne/w/c/e/sw/s/se, top-left/..., or X,Y)\n",
-                        argv[i]);
+                        pval);
                 return 1;
             }
             has_position = parsed_pos.has_position;
             center_x = parsed_pos.center_x;
             center_y = parsed_pos.center_y;
+            from_right = parsed_pos.from_right;
+            from_bottom = parsed_pos.from_bottom;
             pos_x = parsed_pos.pos_x;
             pos_y = parsed_pos.pos_y;
             if (!parsed_pos.has_position) corner = parsed_pos.corner;
@@ -330,6 +339,8 @@ int main(int argc, char **argv) {
             has_position = false;
             center_x = false;
             center_y = false;
+            from_right = false;
+            from_bottom = false;
         } else if (strcmp(argv[i], "--case") == 0 && i + 1 < argc) {
             if (!renderer_parse_case_theme(argv[++i], &case_theme)) {
                 fprintf(stderr, "Invalid case theme '%s' (expected white, charcoal, orange, or retro)\n",
@@ -474,6 +485,8 @@ int main(int argc, char **argv) {
             .has_position = has_position,
             .center_x = center_x,
             .center_y = center_y,
+            .from_right = from_right,
+            .from_bottom = from_bottom,
             .pos_x = pos_x,
             .pos_y = pos_y,
             .corner = corner,

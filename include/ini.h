@@ -24,6 +24,8 @@ typedef struct {
     bool has_position;
     bool center_x;
     bool center_y;
+    bool from_right;
+    bool from_bottom;
     int pos_x;
     int pos_y;
     MarkeeWindowCorner corner;

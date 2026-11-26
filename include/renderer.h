@@ -73,6 +73,8 @@ typedef struct {
     bool has_position;
     bool center_x;
     bool center_y;
+    bool from_right;
+    bool from_bottom;
     int pos_x;
     int pos_y;
     MarkeeWindowCorner corner;
@@ -92,7 +94,8 @@ bool renderer_parse_corner(const char *s, MarkeeWindowCorner *out_corner);
 
 /* Parse a unified window position string into opts:
  *   - Named anchor / compass direction (e.g. "nw", "se", "n", "w", "center", "top-right")
- *   - Explicit pixel coordinates "X,Y" (either axis may be "center"/"c", e.g. "center,80") */
+ *   - Pixel coordinates "X,Y" where negative values measure inward from the right/bottom
+ *     screen edge (e.g. "-10,10", "10,-20", "-0,-0") and either axis may be "center"/"c" */
 bool renderer_parse_position(const char *s, MarkeeWindowOpts *out_opts);
 
 /* Compute initial window (x, y) on a mon_w x mon_h monitor from opts. */
