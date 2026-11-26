@@ -215,6 +215,7 @@ int cli_run(int argc, char **argv) {
     const char *transition = NULL;
     double ttl = 5.0;
     double speed = 1.0;
+    bool speed_set = false;
     int loop = -1;
     int volume = 100;
     bool scroll = false;
@@ -243,6 +244,7 @@ int cli_run(int argc, char **argv) {
             ttl = strtod(argv[++i], NULL);
         } else if (strcmp(argv[i], "--speed") == 0 && i + 1 < argc) {
             speed = strtod(argv[++i], NULL);
+            speed_set = true;
         } else if (strcmp(argv[i], "--loop") == 0 && i + 1 < argc) {
             loop = (int)strtol(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--sound") == 0 && i + 1 < argc) {
@@ -345,11 +347,13 @@ int cli_run(int argc, char **argv) {
             return http_call(host, port, token, "POST", "/notify",
                              "application/json", json, strlen(json));
         }
+        char espeed[32] = "";
+        if (speed_set) snprintf(espeed, sizeof(espeed), ",\"speed\":%.2f", speed);
         snprintf(json, sizeof(json),
                  "[{\"op\":\"clear\",\"color\":\"%s\"},"
                  "{\"op\":\"text\",\"y\":4,\"text\":\"%s\",\"color\":\"%s\",\"font\":\"%s\","
-                 "\"align\":\"center\",\"scroll\":%s}]",
-                 eb, et, ec, ef, scroll ? "true" : "false");
+                 "\"align\":\"center\",\"scroll\":%s%s}]",
+                 eb, et, ec, ef, scroll ? "true" : "false", espeed);
         char path[128] = "/draw";
         if (transition) {
             char etr[32];
