@@ -200,6 +200,15 @@ static bool url_decode(const char *src, size_t len, char *out, size_t out_size) 
 
 /* Extract and URL-decode a query parameter value from "a=1&b=2".
  * Returns false if the key is absent or its decoded value does not fit in out. */
+/* Copy src into dst, truncating to fit (always NUL-terminated). */
+static void copy_truncated(char *dst, size_t dst_size, const char *src) {
+    if (!dst || dst_size == 0) return;
+    size_t n = src ? strlen(src) : 0;
+    if (n >= dst_size) n = dst_size - 1;
+    if (n) memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
 static bool query_get(const char *query, const char *key, char *out, size_t out_size) {
     if (!query || !key || !out || out_size == 0) return false;
     size_t klen = strlen(key);
@@ -411,7 +420,7 @@ static int read_http_request(SockReader *r, HttpRequest *req) {
         strncmp(version, "HTTP/1.", 7) != 0 || strlen(method) >= sizeof(req->method)) {
         return READ_BAD;
     }
-    snprintf(req->method, sizeof(req->method), "%s", method);
+    copy_truncated(req->method, sizeof(req->method), method);
 
     req->keep_alive = (strcmp(version, "HTTP/1.1") == 0);
 
@@ -419,10 +428,10 @@ static int read_http_request(SockReader *r, HttpRequest *req) {
     if (q) {
         *q = '\0';
         if (strlen(q + 1) >= sizeof(req->query)) return READ_URI_TOO_LONG;
-        snprintf(req->query, sizeof(req->query), "%s", q + 1);
+        copy_truncated(req->query, sizeof(req->query), q + 1);
     }
     if (strlen(target) >= sizeof(req->path)) return READ_URI_TOO_LONG;
-    snprintf(req->path, sizeof(req->path), "%s", target);
+    copy_truncated(req->path, sizeof(req->path), target);
 
     size_t header_bytes = strlen(line);
     for (;;) {
@@ -1231,19 +1240,19 @@ static void handle_request(MarkeeServer *srv, int fd, const HttpRequest *req) {
         int volume = 100;
 
         if (query_get(req->query, "text", val, sizeof(val))) {
-            snprintf(text, sizeof(text), "%s", val);
+            copy_truncated(text, sizeof(text), val);
         }
         if (query_get(req->query, "color", val, sizeof(val))) {
-            snprintf(color, sizeof(color), "%s", val);
+            copy_truncated(color, sizeof(color), val);
         }
         if (query_get(req->query, "bg", val, sizeof(val))) {
-            snprintf(bg, sizeof(bg), "%s", val);
+            copy_truncated(bg, sizeof(bg), val);
         }
         if (query_get(req->query, "border", val, sizeof(val))) {
-            snprintf(border, sizeof(border), "%s", val);
+            copy_truncated(border, sizeof(border), val);
         }
         if (query_get(req->query, "font", val, sizeof(val))) {
-            snprintf(font, sizeof(font), "%s", val);
+            copy_truncated(font, sizeof(font), val);
         }
         if (query_get(req->query, "sound", val, sizeof(val))) {
             sound_id = audio_parse_alert_id(val);

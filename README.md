@@ -1,5 +1,9 @@
 # markee
 
+[![CI](https://github.com/sspencer/markee/actions/workflows/ci.yml/badge.svg)](https://github.com/sspencer/markee/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/sspencer/markee/actions/workflows/codeql.yml/badge.svg)](https://github.com/sspencer/markee/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A C11 + [raylib](https://www.raylib.com/) desktop simulator for a **72×16, 24-bit RGB LED matrix display**, inspired by the [BUSY Bar](https://busy.app/products/busy-bar).
 
 `markee` renders the LED panel inside a molded plastic enclosure calibrated to appear **~6.35 inches wide** on screen, refreshes at **60 Hz**, and exposes a lightweight **HTTP/1.1 API** so any script or program can draw shapes and scrolling text, push 72×16 PNGs or raw 24-bit RGB frames, trigger gentle alert chimes, and read back the current display as a PNG.
@@ -360,14 +364,28 @@ make sanitize     # same suite under AddressSanitizer + UndefinedBehaviorSanitiz
 make fuzz-smoke   # standalone fuzz harnesses for the GIF, JSON, /draw, and HTTP parsers
 ```
 
-CI (`.github/workflows/ci.yml`) runs all three on macOS and Ubuntu with `-Werror`, and byte-compiles the Python examples.
+GitHub Actions runs on every push and pull request:
+
+- **CI** (`.github/workflows/ci.yml`): build with `-Werror`, `./test_api`, `make sanitize`, and `make fuzz-smoke` on macOS (clang) and Ubuntu (gcc and clang). Ubuntu ships no raylib package, so `.github/scripts/install-raylib.sh` builds it from source. Also byte-compiles the Python examples, syntax-checks the shell completions, and runs ShellCheck on the packaging scripts.
+- **CodeQL** (`.github/workflows/codeql.yml`): C and Python security analysis, also run weekly.
+- **Release** (`.github/workflows/release.yml`): pushing a `v*` tag builds tarballs for macOS arm64, Linux x86_64, and Linux aarch64 with raylib linked statically, then publishes them with `SHA256SUMS` to a GitHub Release.
+
+To cut a release: `git tag v1.2.0 && git push origin v1.2.0`.
 
 ## Project structure
 
 ```text
 markee/
-├── .github/workflows/
-│   └── ci.yml           # macOS + Linux CI (strict -Werror, tests, ASan/UBSan, fuzz smoke)
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml       # macOS + Linux CI (strict -Werror, tests, ASan/UBSan, fuzz smoke)
+│   │   ├── codeql.yml   # CodeQL static analysis (C, Python)
+│   │   └── release.yml  # Tag-triggered release tarballs → GitHub Releases
+│   ├── scripts/
+│   │   └── install-raylib.sh  # Build raylib from source on Ubuntu
+│   ├── ISSUE_TEMPLATE/  # Bug report / feature request forms
+│   ├── pull_request_template.md
+│   └── dependabot.yml   # Weekly GitHub Actions version bumps
 ├── Makefile             # Build, test, sanitize, fuzz-smoke, app, tarball, install (`make help`)
 ├── README.md            # Overview, build, config, and CLI usage
 ├── completions/
