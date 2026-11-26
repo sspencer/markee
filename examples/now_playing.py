@@ -54,9 +54,17 @@ def poll_macos() -> Tuple[str, str]:
         script = (
             f'if application "{app}" is running then\n'
             f'  tell application "{app}"\n'
-            f'    set st to player state as string\n'
-            f'    if st is "playing" or st is "paused" then\n'
-            f'      return st & "|||" & (name of current track) & " - " & (artist of current track)\n'
+            f'    set pstate to (player state as text)\n'
+            f'    if pstate is "playing" or pstate is "paused" then\n'
+            f'      set tname to ""\n'
+            f'      set tartist to ""\n'
+            f'      try\n'
+            f'        set tname to (name of current track) as text\n'
+            f'      end try\n'
+            f'      try\n'
+            f'        set tartist to (artist of current track) as text\n'
+            f'      end try\n'
+            f'      return pstate & "|||" & tname & "|||" & tartist\n'
             f'    end if\n'
             f'  end tell\n'
             f'end if\n'
@@ -64,11 +72,14 @@ def poll_macos() -> Tuple[str, str]:
         )
         out = _run_cmd(["osascript", "-e", script])
         if out and "|||" in out:
-            state, label = out.split("|||", 1)
-            state = state.strip().lower()
-            label = label.strip()
-            if label:
-                return state, label
+            parts = out.split("|||")
+            state = parts[0].strip().lower()
+            tname = parts[1].strip() if len(parts) > 1 else ""
+            tartist = parts[2].strip() if len(parts) > 2 else ""
+            if tname and tartist:
+                return state, f"{tname} - {tartist}"
+            if tname:
+                return state, tname
     return "idle", ""
 
 
@@ -117,13 +128,13 @@ def build_ops(state: str, label: str, speed: float, color: str, icon_color: str)
     playing = state == "playing"
     ops: List[Dict[str, Any]] = [
         {"op": "clear", "color": "#05070c"},
-        {"op": "icon", "name": "music" if playing else "pause", "x": 2, "y": 4, "color": icon_color if playing else "amber"},
+        {"op": "icon", "name": "music" if playing else "pause", "x": 2, "y": 1, "color": icon_color if playing else "amber"},
         {"op": "line", "x1": 11, "y1": 2, "x2": 11, "y2": 13, "color": "#1e2736"},
     ]
-    # Static miniature equalizer bars along bottom-left under the icon.
-    eq_heights = [3, 5, 2, 4] if playing else [1, 1, 1, 1]
+    # Miniature equalizer bars along bottom-left cleanly beneath the icon (y=11..14).
+    eq_heights = [2, 4, 2, 3] if playing else [1, 1, 1, 1]
     for i, h in enumerate(eq_heights):
-        ops.append({"op": "rect", "x": 2 + i * 2, "y": 15 - h, "w": 1, "h": h, "fill": "#1db954" if playing else "#444a55"})
+        ops.append({"op": "rect", "x": 2 + i * 2, "y": 15 - h, "w": 1, "h": h, "fill": icon_color if playing else "#444a55"})
 
     text_op: Dict[str, Any] = {
         "op": "text",
