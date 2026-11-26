@@ -67,7 +67,8 @@ class Client:
         self._req("POST", f"/draw{q}", ops)
 
     def poll_events(self, since: int, wait_s: float) -> Dict[str, Any]:
-        return self._req("GET", f"/events?since={since}&wait={wait_s:.2f}", timeout=wait_s + 3.0)
+        wait_ms = max(0, min(5000, int(round(wait_s * 1000.0))))
+        return self._req("GET", f"/events?since={since}&wait={wait_ms}", timeout=wait_s + 3.0)
 
 
 def card_clock() -> List[Dict[str, Any]]:
@@ -76,11 +77,10 @@ def card_clock() -> List[Dict[str, Any]]:
         {"op": "icon", "name": "clock", "x": 3, "y": 3, "color": "amber"},
         {
             "op": "clock",
-            "x": 14,
-            "y": 3,
-            "w": 56,
+            "x": 42,
+            "y": 4,
             "align": "center",
-            "format": "HH:MM:SS",
+            "format": "24h",
             "color": "warmwhite",
         },
     ]

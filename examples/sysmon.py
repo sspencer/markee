@@ -190,7 +190,7 @@ def build_ops(cpu: float, mem: float, net_kbps: float, history: Deque[float]) ->
             "fill": "#0d221c" if cpu < 60 else "#281408",
         },
         # Vertical divider
-        {"op": "line", "x0": 39, "y0": 1, "x1": 39, "y1": 14, "color": "#1c2430"},
+        {"op": "line", "x1": 39, "y1": 1, "x2": 39, "y2": 14, "color": "#1c2430"},
         # Right pane: MEM bar + NET bar
         {"op": "text", "x": 42, "y": 1, "text": "MEM", "color": "#7b8a9e", "font": "3x5"},
         {"op": "text", "x": 55, "y": 1, "w": 16, "align": "right", "text": f"{int(round(mem))}%", "color": m_col, "font": "3x5"},

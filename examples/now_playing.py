@@ -118,7 +118,7 @@ def build_ops(state: str, label: str, speed: float, color: str, icon_color: str)
     ops: List[Dict[str, Any]] = [
         {"op": "clear", "color": "#05070c"},
         {"op": "icon", "name": "music" if playing else "pause", "x": 2, "y": 4, "color": icon_color if playing else "amber"},
-        {"op": "line", "x0": 11, "y0": 2, "x1": 11, "y1": 13, "color": "#1e2736"},
+        {"op": "line", "x1": 11, "y1": 2, "x2": 11, "y2": 13, "color": "#1e2736"},
     ]
     # Static miniature equalizer bars along bottom-left under the icon.
     eq_heights = [3, 5, 2, 4] if playing else [1, 1, 1, 1]

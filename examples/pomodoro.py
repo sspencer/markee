@@ -63,7 +63,8 @@ class Client:
             self._req("POST", "/alert", {"sound": sound, "volume": volume})
 
     def poll_events(self, since: int, wait_s: float = 1.0) -> Dict[str, Any]:
-        return self._req("GET", f"/events?since={since}&wait={wait_s:.2f}", timeout=wait_s + 3.0)
+        wait_ms = max(0, min(5000, int(round(wait_s * 1000.0))))
+        return self._req("GET", f"/events?since={since}&wait={wait_ms}", timeout=wait_s + 3.0)
 
 
 def render_phase(
@@ -101,9 +102,8 @@ def render_phase(
         {"op": "text", "x": 12, "y": 4, "text": tag, "color": "#8899aa", "font": "3x5"},
         {
             "op": "countdown",
-            "x": 24,
-            "y": 3,
-            "w": 46,
+            "x": 70,
+            "y": 4,
             "align": "right",
             "seconds": max(0.0, remaining_s),
             "color": color,

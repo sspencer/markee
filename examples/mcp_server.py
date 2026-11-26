@@ -351,11 +351,12 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         label = args.get("label")
         ops: List[Dict[str, Any]] = [{"op": "clear"}]
         if label:
-            ops.append({"op": "text", "x": 2, "y": 4, "text": str(label)[:6], "color": "warmwhite", "font": "3x5"})
+            ops.append({"op": "text", "x": 2, "y": 5, "text": str(label)[:6], "color": "warmwhite", "font": "3x5"})
             ops.append({
                 "op": "countdown",
-                "x": 30,
-                "y": 3,
+                "x": 70,
+                "y": 4,
+                "align": "right",
                 "seconds": secs,
                 "color": color,
                 "bar": bar,
@@ -365,9 +366,7 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         else:
             ops.append({
                 "op": "countdown",
-                "x": 0,
-                "y": 3,
-                "w": 72,
+                "y": 4,
                 "align": "center",
                 "seconds": secs,
                 "color": color,
@@ -377,11 +376,13 @@ def execute_tool(client: MarkeeClient, name: str, args: Dict[str, Any]) -> Any:
         return client.post_json("/draw", ops)
 
     if name == "markee_clock":
-        fmt = str(args.get("format", "HH:MM:SS"))
+        raw_fmt = str(args.get("format", "24h"))
+        fmt_map = {"HH:MM:SS": "24h", "HH:MM": "24hm"}
+        fmt = fmt_map.get(raw_fmt, raw_fmt)
         color = str(args.get("color", "warmwhite"))
         ops = [
             {"op": "clear"},
-            {"op": "clock", "x": 0, "y": 4, "w": 72, "align": "center", "format": fmt, "color": color},
+            {"op": "clock", "y": 4, "align": "center", "format": fmt, "color": color},
         ]
         return client.post_json("/draw", ops)
 
