@@ -1,0 +1,157 @@
+#compdef markee
+
+_markee() {
+    local -a subcommands positions colors shapes cases sounds fonts fits transitions clock_formats
+    subcommands=(
+        'say:Display text on a running markee server'
+        'notify:Show a transient notification banner with TTL'
+        'gif:Play an animated GIF on a running markee server'
+        'timer:Start a live countdown timer widget'
+        'clock:Display the built-in digital clock widget'
+        'alert:Play a synthesized alert sound (ding, chime, bell)'
+        'clear:Clear the LED matrix to black'
+        'info:Show server status and capabilities JSON'
+    )
+    positions=(nw n ne w c e sw s se center top-left top top-right left right bottom-left bottom bottom-right)
+    colors=(white warmwhite red green blue cyan magenta yellow amber orange purple pink black)
+    shapes=(square circle)
+    cases=(white charcoal orange retro)
+    sounds=(ding chime bell)
+    fonts=(4x6 5x7 6x8 8x8 prop)
+    fits=(crop contain stretch)
+    transitions=(fade slide-left slide-up wipe)
+    clock_formats=(24h 24hm 12h 12hm)
+
+    if (( CURRENT >= 3 )); then
+        case "$words[2]" in
+            say)
+                _arguments \
+                    '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
+                    '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
+                    '--token[Bearer auth token]:token:' \
+                    '(-c --color)'{-c,--color}'[Text color]:color:('"${colors[*]}"')' \
+                    '--bg[Background color]:color:('"${colors[*]}"')' \
+                    '--font[Bitmap font]:font:('"${fonts[*]}"')' \
+                    '--scroll[Scroll text horizontally]' \
+                    '--speed[Scroll speed in px/s]:speed:' \
+                    '--transition[Transition effect]:transition:('"${transitions[*]}"')' \
+                    '--sound[Alert sound]:sound:('"${sounds[*]}"')' \
+                    '--ding[Play ding sound]' \
+                    '--chime[Play chime sound]' \
+                    '--bell[Play bell sound]' \
+                    '1:text:'
+                return
+                ;;
+            notify)
+                _arguments \
+                    '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
+                    '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
+                    '--token[Bearer auth token]:token:' \
+                    '--ttl[Duration in seconds]:seconds:' \
+                    '(-c --color)'{-c,--color}'[Text color]:color:('"${colors[*]}"')' \
+                    '--bg[Background color]:color:('"${colors[*]}"')' \
+                    '--border[Border color]:color:('"${colors[*]}"')' \
+                    '--sound[Alert sound]:sound:('"${sounds[*]}"')' \
+                    '--ding[Play ding sound]' \
+                    '--chime[Play chime sound]' \
+                    '--bell[Play bell sound]' \
+                    '1:text:'
+                return
+                ;;
+            gif)
+                _arguments \
+                    '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
+                    '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
+                    '--token[Bearer auth token]:token:' \
+                    '--fill[Transparent background fill color]:color:('"${colors[*]}"')' \
+                    '--fit[Scaling mode]:fit:('"${fits[*]}"')' \
+                    '--speed[Playback speed multiplier]:speed:' \
+                    '--loop[Loop count (0=infinite)]:count:' \
+                    '1:GIF file:_files -g "*.gif(-.)"'
+                return
+                ;;
+            timer)
+                _arguments \
+                    '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
+                    '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
+                    '--token[Bearer auth token]:token:' \
+                    '(-c --color)'{-c,--color}'[Timer color]:color:('"${colors[*]}"')' \
+                    '--bg[Background color]:color:('"${colors[*]}"')' \
+                    '--font[Bitmap font]:font:('"${fonts[*]}"')' \
+                    '--no-bar[Hide bottom progress bar]' \
+                    '--sound[Completion alert sound]:sound:('"${sounds[*]}"')' \
+                    '--ding[Play ding on finish]' \
+                    '--chime[Play chime on finish]' \
+                    '--bell[Play bell on finish]' \
+                    '1:duration:(30s 1m 5m 10m 15m 25m 1h)'
+                return
+                ;;
+            clock)
+                _arguments \
+                    '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
+                    '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
+                    '--token[Bearer auth token]:token:' \
+                    '(-c --color)'{-c,--color}'[Clock color]:color:('"${colors[*]}"')' \
+                    '--bg[Background color]:color:('"${colors[*]}"')' \
+                    '--font[Bitmap font]:font:('"${fonts[*]}"')' \
+                    '--format[Time format]:format:('"${clock_formats[*]}"')'
+                return
+                ;;
+            alert)
+                _arguments \
+                    '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
+                    '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
+                    '--token[Bearer auth token]:token:' \
+                    '--volume[Volume 0..100]:volume:' \
+                    '--ding[Play ding sound]' \
+                    '--chime[Play chime sound]' \
+                    '--bell[Play bell sound]' \
+                    '1:sound:('"${sounds[*]}"')'
+                return
+                ;;
+            clear|info)
+                _arguments \
+                    '(-H --host)'{-H,--host}'[Server host]:host:_hosts' \
+                    '(-p --port)'{-p,--port}'[Server TCP port]:port:' \
+                    '--token[Bearer auth token]:token:'
+                return
+                ;;
+        esac
+    fi
+
+    _arguments \
+        '(-r --resolution)'{-r,--resolution}'[LED matrix resolution WxH]:resolution:(72x16 128x32 64x32 64x64 32x8)' \
+        '(-z --zoom)'{-z,--zoom}'[Window zoom multiplier]:zoom:(0.5 0.75 1.0 1.25 1.5 2.0)' \
+        '--square[Render LEDs as squares]' \
+        '--circle[Render LEDs as circles]' \
+        '(-s --shape)'{-s,--shape}'[Pixel shape]:shape:('"${shapes[*]}"')' \
+        '(-m --monochrome --mono)'{-m,--monochrome,--mono}'[Monochrome tint color]:color:('"${colors[*]}"')' \
+        '(-H --host)'{-H,--host}'[Bind address]:host:_hosts' \
+        '(-p --port)'{-p,--port}'[TCP listen port]:port:' \
+        '--token[Require Bearer auth token]:token:' \
+        '--dpi[Override monitor logical DPI]:dpi:' \
+        '(--always-on-top --topmost)'{--always-on-top,--topmost}'[Keep window above other windows]' \
+        '--no-always-on-top[Disable always-on-top]' \
+        '(--borderless --frameless)'{--borderless,--frameless}'[Floating borderless widget mode]' \
+        '--no-borderless[Disable borderless mode]' \
+        '(--position --pos)'{--position,--pos}'[Window placement (compass, edge/corner, or X,Y)]:position:('"${positions[*]}"')' \
+        '--corner[Named window anchor]:corner:('"${positions[*]}"')' \
+        '--case[Enclosure color theme]:theme:('"${cases[*]}"')' \
+        '--idle-dim[Seconds before idle dimming]:seconds:' \
+        '--idle-brightness[Dimmed brightness 0..100]:brightness:' \
+        '--demo[Start with built-in demo animation]' \
+        '--blank[Start with blank display]' \
+        '(--mute --no-audio)'{--mute,--no-audio}'[Disable alert sound playback]' \
+        '--headless[Run API server without GUI window]' \
+        '--config[Load INI configuration file]:config file:_files' \
+        '--no-config[Skip default config file]' \
+        '--save-position[Save final window position to config file on exit]' \
+        '(-h --help)'{-h,--help}'[Show help and exit]' \
+        '1:subcommand:->subcmd'
+
+    if [[ "$state" == subcmd ]]; then
+        _describe -t subcommands 'markee subcommand' subcommands
+    fi
+}
+
+_markee "$@"

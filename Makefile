@@ -13,6 +13,12 @@ DEFAULT_PREFIX := $(shell \
 	else echo "/usr/local"; fi)
 PREFIX      ?= $(DEFAULT_PREFIX)
 BINDIR      ?= $(PREFIX)/bin
+DATADIR     ?= $(PREFIX)/share
+MANDIR      ?= $(DATADIR)/man/man1
+DOCDIR      ?= $(DATADIR)/doc/$(TARGET)
+BASHCOMPDIR ?= $(DATADIR)/bash-completion/completions
+ZSHCOMPDIR  ?= $(DATADIR)/zsh/site-functions
+FISHCOMPDIR ?= $(DATADIR)/fish/vendor_completions.d
 
 SRC_DIR     := src
 INC_DIR     := include
@@ -139,6 +145,14 @@ tarball: $(TARGET)
 install: $(TARGET)
 	install -d "$(DESTDIR)$(BINDIR)"
 	install -m 0755 $(TARGET) "$(DESTDIR)$(BINDIR)/$(TARGET)"
+	install -d "$(DESTDIR)$(MANDIR)"
+	install -m 0644 docs/markee.1 "$(DESTDIR)$(MANDIR)/markee.1"
+	install -d "$(DESTDIR)$(DOCDIR)"
+	install -m 0644 README.md LICENSE docs/API.md "$(DESTDIR)$(DOCDIR)/"
+	install -d "$(DESTDIR)$(BASHCOMPDIR)" "$(DESTDIR)$(ZSHCOMPDIR)" "$(DESTDIR)$(FISHCOMPDIR)"
+	install -m 0644 completions/markee.bash "$(DESTDIR)$(BASHCOMPDIR)/markee"
+	install -m 0644 completions/_markee "$(DESTDIR)$(ZSHCOMPDIR)/_markee"
+	install -m 0644 completions/markee.fish "$(DESTDIR)$(FISHCOMPDIR)/markee.fish"
 	@if [ -z "$(DESTDIR)" ]; then \
 		case ":$$PATH:" in \
 			*":$(BINDIR):"*) ;; \
@@ -148,6 +162,11 @@ install: $(TARGET)
 
 uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/$(TARGET)"
+	rm -f "$(DESTDIR)$(MANDIR)/markee.1"
+	rm -rf "$(DESTDIR)$(DOCDIR)"
+	rm -f "$(DESTDIR)$(BASHCOMPDIR)/markee"
+	rm -f "$(DESTDIR)$(ZSHCOMPDIR)/_markee"
+	rm -f "$(DESTDIR)$(FISHCOMPDIR)/markee.fish"
 
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET) $(TEST_TARGET) $(SAN_TARGET) $(SAN_TARGET).dSYM
@@ -167,8 +186,8 @@ help:
 	@echo "  make fuzz       Build libFuzzer binaries (requires LLVM clang)"
 	@echo "  make app        Build macOS Markee.app bundle in build/Markee.app"
 	@echo "  make tarball    Build release tarball in build/"
-	@echo "  make install    Install $(TARGET) to $(BINDIR)"
-	@echo "  make uninstall  Remove $(TARGET) from $(BINDIR)"
+	@echo "  make install    Install binary, man page, docs, and shell completions to $(PREFIX)"
+	@echo "  make uninstall  Remove installed binary, man page, docs, and completions from $(PREFIX)"
 	@echo "  make clean      Remove build artifacts and binaries"
 	@echo "  make distclean  Clean everything including snapshot.png and recording.gif"
 

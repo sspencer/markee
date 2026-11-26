@@ -36,11 +36,20 @@ fi
 rm -rf "${PKG_DIR}"
 mkdir -p "${PKG_DIR}/DEBIAN" \
          "${PKG_DIR}/usr/bin" \
+         "${PKG_DIR}/usr/share/man/man1" \
          "${PKG_DIR}/usr/share/doc/markee/examples" \
+         "${PKG_DIR}/usr/share/bash-completion/completions" \
+         "${PKG_DIR}/usr/share/zsh/vendor-completions" \
+         "${PKG_DIR}/usr/share/fish/vendor_completions.d" \
          "${PKG_DIR}/usr/lib/systemd/user"
 
 install -m 0755 "${ROOT_DIR}/markee" "${PKG_DIR}/usr/bin/markee"
+install -m 0644 "${ROOT_DIR}/docs/markee.1" "${PKG_DIR}/usr/share/man/man1/markee.1"
+gzip -9fn "${PKG_DIR}/usr/share/man/man1/markee.1"
 install -m 0644 "${ROOT_DIR}/README.md" "${ROOT_DIR}/LICENSE" "${ROOT_DIR}/docs/API.md" "${PKG_DIR}/usr/share/doc/markee/"
+install -m 0644 "${ROOT_DIR}/completions/markee.bash" "${PKG_DIR}/usr/share/bash-completion/completions/markee"
+install -m 0644 "${ROOT_DIR}/completions/_markee" "${PKG_DIR}/usr/share/zsh/vendor-completions/_markee"
+install -m 0644 "${ROOT_DIR}/completions/markee.fish" "${PKG_DIR}/usr/share/fish/vendor_completions.d/markee.fish"
 cp -R "${ROOT_DIR}/examples/." "${PKG_DIR}/usr/share/doc/markee/examples/"
 
 cat > "${PKG_DIR}/usr/lib/systemd/user/markee.service" <<'EOF'

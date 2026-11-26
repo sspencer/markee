@@ -12,7 +12,11 @@ class Markee < Formula
   def install
     system "make", "release"
     bin.install "markee"
+    man1.install "docs/markee.1"
     doc.install "README.md", "docs/API.md"
+    bash_completion.install "completions/markee.bash" => "markee"
+    zsh_completion.install "completions/_markee"
+    fish_completion.install "completions/markee.fish"
     (pkgshare/"examples").install Dir["examples/*"]
   end
 

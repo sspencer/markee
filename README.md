@@ -73,7 +73,7 @@ curl -o capture.png http://127.0.0.1:8080/frame
 | `make app` | Build a native macOS `build/Markee.app` bundle (see [`packaging/README.md`](packaging/README.md)) |
 | `make tarball` | Build a versioned release tarball in `build/` |
 | `make debug` / `make release` | Clean rebuild with `-O0 -g` or `-O3` |
-| `make install` / `make uninstall` | Install or remove in `~/.local/bin` (falls back to `/usr/local/bin`; override with `PREFIX=` / `DESTDIR=`) |
+| `make install` / `make uninstall` | Install or remove the binary, man page (`man markee`), docs (`README.md`, `API.md`, `LICENSE`), and Bash/Zsh/Fish completions under `~/.local` (or `/usr/local`; override with `PREFIX=` / `DESTDIR=`) |
 | `make clean` / `make distclean` | Remove build artifacts (`distclean` also deletes `snapshot.png`) |
 | `make help` | List all targets |
 
@@ -282,8 +282,13 @@ markee/
 │   └── ci.yml           # macOS + Linux CI (strict -Werror, tests, ASan/UBSan, fuzz smoke)
 ├── Makefile             # Build, test, sanitize, fuzz-smoke, app, tarball, install (`make help`)
 ├── README.md            # Overview, build, config, and CLI usage
+├── completions/
+│   ├── markee.bash      # Bash tab completion
+│   ├── _markee          # Zsh tab completion
+│   └── markee.fish      # Fish tab completion
 ├── docs/
 │   ├── API.md           # Complete HTTP API reference and recipes
+│   ├── markee.1         # Manual page (`man markee`)
 │   ├── ideas.md         # Completed product & engineering roadmap
 │   └── demo.png         # Screenshot of markee running in --demo mode
 ├── include/

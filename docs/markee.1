@@ -1,0 +1,285 @@
+.TH MARKEE 1 "2026-11-25" "markee 1.0" "User Commands"
+.SH NAME
+markee \- simulated 72x16 24-bit RGB LED matrix display and HTTP/1.1 API server
+.SH SYNOPSIS
+.B markee
+[\fIOPTIONS\fR]
+.br
+.B markee
+\fICOMMAND\fR [\fIARGS\fR...]
+.SH DESCRIPTION
+.B markee
+simulates a true-to-size (~6.35-inch wide) 72x16 24-bit RGB LED matrix display
+inside a molded desktop enclosure, refreshing at 60 Hz and exposing a local
+HTTP/1.1 API (with Keep-Alive, open CORS, SSE events, and a built-in Web
+Playground at \fB/ui\fR).
+.PP
+When invoked with a client subcommand (\fBsay\fR, \fBnotify\fR, \fBgif\fR,
+\fBtimer\fR, \fBclock\fR, \fBalert\fR, \fBclear\fR, or \fBinfo\fR),
+.B markee
+acts as a CLI client talking to an already running instance.
+.SH OPTIONS
+.TP
+.BR \-r ", " \-\-resolution " " \fIWxH\fR
+LED matrix resolution in pixels (default: \fB72x16\fR; range \fB1..1024\fR per
+axis).
+.TP
+.BR \-z ", " \-\-zoom " " \fIfactor\fR
+Window zoom multiplier (default: \fB1.0\fR; range \fB0.1..10.0\fR).
+.TP
+.BR \-\-square ", " \-\-circle
+Render each LED pixel as a square (default) or circle.
+.TP
+.BR \-s ", " \-\-shape " " \fIstyle\fR
+Pixel shape: \fBsquare\fR or \fBcircle\fR.
+.TP
+.BR \-m ", " \-\-monochrome ", " \-\-mono " " \fIcolor\fR
+Start with the non-destructive BT.709 perceptual monochrome tint filter enabled
+(accepts \fB#rrggbb\fR, \fB0xrrggbb\fR, \fB#rgb\fR, or named colors such as
+\fBamber\fR, \fBgreen\fR, \fBred\fR).
+.TP
+.BR \-H ", " \-\-host " " \fIaddr\fR
+Bind address for the HTTP server (IPv4, IPv6, or hostname; default:
+\fB127.0.0.1\fR).
+.TP
+.BR \-p ", " \-\-port " " \fIport\fR
+TCP port to listen on (\fB0..65535\fR; \fB0\fR picks an ephemeral port; default:
+\fB8080\fR or \fBMARKEE_PORT\fR).
+.TP
+.BR \-\-token " " \fIsecret\fR
+Require \fBAuthorization: Bearer \fIsecret\fR (or \fB?token=\fIsecret\fR) on API
+requests. Overrides \fBMARKEE_TOKEN\fR.
+.TP
+.BR \-\-dpi " " \fIvalue\fR
+Override monitor logical DPI for physical 6.35-inch sizing.
+.TP
+.BR \-\-always\-on\-top ", " \-\-topmost
+Keep the GUI window floating above other windows. Use
+\fB\-\-no\-always\-on\-top\fR to override a config file setting.
+.TP
+.BR \-\-borderless ", " \-\-frameless
+Hide the OS titlebar, use a transparent backdrop, and drag the enclosure to
+reposition. Use \fB\-\-no\-borderless\fR to override a config file setting.
+.TP
+.BR \-\-position ", " \-\-pos " " \fIpos\fR
+Set initial window placement using:
+.RS
+.IP \(bu 2
+9-point compass directions (case-insensitive): \fBnw\fR, \fBn\fR, \fBne\fR,
+\fBw\fR, \fBc\fR, \fBe\fR, \fBsw\fR, \fBs\fR, \fBse\fR (or full words
+\fBnorthwest\fR, \fBnorth\fR, etc.).
+.IP \(bu 2
+Descriptive anchor names: \fBtop-left\fR (\fBtl\fR), \fBtop\fR
+(\fBtop-center\fR), \fBtop-right\fR (\fBtr\fR), \fBleft\fR
+(\fBmiddle-left\fR/\fBcenter-left\fR), \fBcenter\fR (\fBmiddle\fR),
+\fBright\fR (\fBmiddle-right\fR/\fBcenter-right\fR), \fBbottom-left\fR
+(\fBbl\fR), \fBbottom\fR (\fBbottom-center\fR), \fBbottom-right\fR (\fBbr\fR).
+.IP \(bu 2
+Explicit coordinates \fIX,Y\fR in screen pixels, where either axis may be
+\fBcenter\fR (e.g. \fB120,80\fR, \fBcenter,80\fR, \fB40,center\fR).
+.RE
+.TP
+.BR \-\-corner " " \fIplace\fR
+Alias for named \fB\-\-position\fR anchors.
+.TP
+.BR \-\-case " " \fItheme\fR
+Enclosure color theme: \fBwhite\fR (default), \fBcharcoal\fR
+(\fBblack\fR/\fBdark\fR), \fBorange\fR, or \fBretro\fR (\fBbeige\fR).
+.TP
+.BR \-\-idle\-dim " " \fIseconds\fR
+Automatically fade GUI brightness down after \fIseconds\fR without API writes
+or user input.
+.TP
+.BR \-\-idle\-brightness " " \fI0..100\fR
+Target GUI brightness level used by \fB\-\-idle\-dim\fR (default: \fB20\fR).
+.TP
+.BR \-\-demo ", " \-\-blank
+Start with the built-in 60 Hz demo animation (\fB\-\-demo\fR) or blank display
+(\fB\-\-blank\fR, default).
+.TP
+.BR \-\-mute ", " \-\-no\-audio
+Disable alert sound playback.
+.TP
+.BR \-\-headless
+Run only the HTTP API server and 60 Hz display/audio loop without opening a GUI
+window.
+.TP
+.BR \-\-config " " \fIpath\fR
+Load default options from an INI configuration file instead of the default path.
+.TP
+.BR \-\-no\-config
+Ignore the default configuration file.
+.TP
+.BR \-\-save\-position
+Persist the final GUI window \fBposition = X,Y\fR back to the active config
+file on exit.
+.TP
+.BR \-h ", " \-\-help
+Display usage information and exit.
+.SH CLIENT SUBCOMMANDS
+All client subcommands honor \fBMARKEE_HOST\fR, \fBMARKEE_PORT\fR,
+\fBMARKEE_TOKEN\fR, and accept \fB\-H\fR/\fB\-\-host\fR, \fB\-p\fR/\fB\-\-port\fR,
+and \fB\-\-token\fR.
+.TP
+.BI "say " "<text>"
+Display text on the matrix. Supports \fB\-c\fR/\fB\-\-color\fR, \fB\-\-bg\fR,
+\fB\-\-font\fR (\fB4x6\fR, \fB5x7\fR, \fB6x8\fR, \fB8x8\fR, \fBprop\fR),
+\fB\-\-scroll\fR, \fB\-\-speed\fR, \fB\-\-transition\fR
+(\fBfade\fR, \fBslide-left\fR, \fBslide-up\fR, \fBwipe\fR),
+and \fB\-\-sound\fR/\fB\-\-ding\fR/\fB\-\-chime\fR/\fB\-\-bell\fR.
+.TP
+.BI "notify " "<text>"
+Show a transient notification banner and restore the previous display after
+\fB\-\-ttl\fR seconds (default: \fB5\fR). Supports \fB\-c\fR/\fB\-\-color\fR,
+\fB\-\-bg\fR, \fB\-\-border\fR, \fB\-\-sound\fR, \fB\-\-ding\fR, \fB\-\-chime\fR,
+\fB\-\-bell\fR.
+.TP
+.BI "gif " "<file.gif>"
+Upload and play an animated GIF via \fBPOST /animate\fR. Supports
+\fB\-\-fill\fR, \fB\-\-fit\fR (\fBcrop\fR, \fBcontain\fR, \fBstretch\fR),
+\fB\-\-speed\fR, and \fB\-\-loop\fR.
+.TP
+.BI "timer " "<duration>"
+Start a live 60 Hz countdown widget (e.g. \fB25m\fR, \fB90s\fR, \fB1h30m\fR).
+Supports \fB\-c\fR/\fB\-\-color\fR, \fB\-\-bg\fR, \fB\-\-font\fR,
+\fB\-\-no\-bar\fR, and \fB\-\-sound\fR/\fB\-\-ding\fR/\fB\-\-chime\fR/\fB\-\-bell\fR.
+.TP
+.B clock
+Display the autonomous digital clock widget. Supports \fB\-c\fR/\fB\-\-color\fR,
+\fB\-\-bg\fR, \fB\-\-font\fR, and \fB\-\-format\fR
+(\fB24h\fR, \fB24hm\fR, \fB12h\fR, \fB12hm\fR).
+.TP
+.BI "alert " "[ding|chime|bell]"
+Play a synthesized alert sound. Supports \fB\-\-volume 0..100\fR.
+.TP
+.B clear
+Clear the display to black.
+.TP
+.B info
+Print JSON status and capabilities from \fBGET /info\fR.
+.SH KEYBOARD SHORTCUTS
+In GUI mode:
+.TP
+.B 1 / 2 / 3
+Preview alert sounds (\fBding\fR, \fBchime\fR, \fBbell\fR).
+.TP
+.B C
+Clear display to black.
+.TP
+.B D
+Toggle built-in demo animation.
+.TP
+.B K
+Cycle enclosure case color theme (\fBwhite\fR, \fBcharcoal\fR, \fBorange\fR,
+\fBretro\fR).
+.TP
+.B M
+Toggle monochrome phosphor filter (defaults to amber \fB#ffbf00\fR).
+.TP
+.B P
+Toggle LED pixel shape (\fBsquare\fR / \fBcircle\fR).
+.TP
+.B R
+Start or stop animated GIF recording (saves \fBrecording.gif\fR).
+.TP
+.B S
+Save current frame to \fBsnapshot.png\fR.
+.TP
+.B T
+Toggle always-on-top mode.
+.TP
+.B SPACE / ENTER
+Emit an \fBaction\fR button event on \fBGET /events\fR.
+.TP
+.B + / \-
+Adjust simulated GUI brightness in 10% increments.
+.TP
+.B Q / ESC
+Quit.
+.SH HTTP API
+Main endpoints served on \fBhttp://127.0.0.1:8080\fR by default (see
+\fBAPI.md\fR for the full specification):
+.TP
+.B GET /ui
+Built-in single-page Web Playground studio.
+.TP
+.B GET /info
+Resolution, settings, audio state, and frame counter.
+.TP
+.B POST /draw
+Atomic JSON batch of \fBclear\fR, \fBpixel\fR, \fBline\fR, \fBrect\fR,
+\fBoval\fR, \fBpolygon\fR, \fBtext\fR, \fBicon\fR, \fBgradient\fR,
+\fBprogress\fR, \fBsparkline\fR, \fBclock\fR, \fBcountdown\fR, and \fBimage\fR ops
+(optional \fB?transition=\fR and \fB?ttl=\fR).
+.TP
+.B GET / POST / DELETE /notify
+Show, inspect, or dismiss transient notifications with automatic screen restore.
+.TP
+.B GET / POST / DELETE /frame
+Read or write \fIWxH\fR PNGs or raw 24-bit RGB (\fB/frame.rgb\fR).
+.TP
+.B GET / POST / DELETE /animate
+Play animated GIFs (\fB?fill=\fR, \fB?fit=\fR, \fB?speed=\fR, \fB?loop=\fR),
+plus \fBPOST /animate/pause\fR, \fB/animate/resume\fR, \fB/animate/speed\fR.
+.TP
+.B GET / POST /alert
+List or trigger \fBding\fR/\fBchime\fR/\fBbell\fR or custom note melodies
+(\fB{"melody":"C5:120,E5:120,G5:240"}\fR).
+.TP
+.B GET / POST /events
+JSON long-polling (\fB?since=&wait=\fR) and SSE (\fB?stream=1\fR) event stream.
+.TP
+.B GET / POST / DELETE /record
+Record live matrix frames into an animated GIF89a.
+.TP
+.B GET / POST / DELETE /idle, /monochrome, /brightness, /fill, /pixel, /demo, /clear
+Panel controls and state inspection.
+.SH CONFIGURATION
+Unless \fB\-\-no\-config\fR is given,
+.B markee
+automatically reads \fB$XDG_CONFIG_HOME/markee/config.ini\fR (or
+\fB~/.config/markee/config.ini\fR) before applying environment variables and CLI
+flags. Supported keys: \fBresolution\fR, \fBzoom\fR, \fBshape\fR,
+\fBmonochrome\fR, \fBhost\fR, \fBport\fR, \fBtoken\fR, \fBdpi\fR,
+\fBalways_on_top\fR, \fBborderless\fR, \fBposition\fR, \fBcorner\fR,
+\fBcase\fR, \fBidle_dim\fR, \fBidle_brightness\fR, \fBdemo\fR, \fBmute\fR,
+\fBheadless\fR, and \fBsave_position\fR.
+.SH ENVIRONMENT
+.TP
+.B MARKEE_HOST
+Default host for client subcommands (default: \fB127.0.0.1\fR).
+.TP
+.B MARKEE_PORT
+Default TCP port for server and client subcommands (default: \fB8080\fR).
+.TP
+.B MARKEE_TOKEN
+Optional Bearer authentication token shared by server and client subcommands.
+.TP
+.B XDG_CONFIG_HOME
+Base directory for \fBmarkee/config.ini\fR (defaults to \fB~/.config\fR).
+.SH FILES
+.TP
+.I ~/.config/markee/config.ini
+Default user configuration file.
+.TP
+.I snapshot.png
+Output file written when pressing \fBS\fR in GUI mode.
+.TP
+.I recording.gif
+Output file written when toggling recording with \fBR\fR in GUI mode.
+.SH EXAMPLES
+.nf
+# Floating borderless charcoal widget in the top-right corner
+markee --borderless --always-on-top --case charcoal --position NE
+
+# Horizontally centered near the top edge with amber phosphor tint
+markee --position center,60 --monochrome amber
+
+# Drive a running instance via client subcommands
+markee say "BUILD OK" --color green --chime
+markee timer 25m --color amber --sound bell
+markee gif examples/cat_chase-72x16.gif --fill white
+.fi
+.SH SEE ALSO
+Full HTTP API documentation is installed alongside this package in
+\fBAPI.md\fR and \fBREADME.md\fR.

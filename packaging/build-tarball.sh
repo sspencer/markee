@@ -31,10 +31,11 @@ if [[ ! -x "${ROOT_DIR}/markee" ]]; then
 fi
 
 rm -rf "${STAGE_DIR}"
-mkdir -p "${STAGE_DIR}/docs" "${STAGE_DIR}/examples"
+mkdir -p "${STAGE_DIR}/docs" "${STAGE_DIR}/examples" "${STAGE_DIR}/completions"
 install -m 0755 "${ROOT_DIR}/markee" "${STAGE_DIR}/markee"
 install -m 0644 "${ROOT_DIR}/README.md" "${ROOT_DIR}/LICENSE" "${STAGE_DIR}/"
-install -m 0644 "${ROOT_DIR}/docs/API.md" "${STAGE_DIR}/docs/"
+install -m 0644 "${ROOT_DIR}/docs/API.md" "${ROOT_DIR}/docs/markee.1" "${STAGE_DIR}/docs/"
+install -m 0644 "${ROOT_DIR}/completions/markee.bash" "${ROOT_DIR}/completions/_markee" "${ROOT_DIR}/completions/markee.fish" "${STAGE_DIR}/completions/"
 cp -R "${ROOT_DIR}/examples/." "${STAGE_DIR}/examples/"
 
 tar -C "${ROOT_DIR}/build" -czf "${OUT_TGZ}" "${STAGE_NAME}"
